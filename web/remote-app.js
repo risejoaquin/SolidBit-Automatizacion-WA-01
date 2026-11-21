@@ -49,6 +49,7 @@ function handleSessionExpired(noticeText) {
 
   // Immediate DOM purge of all sensitive views
   purgeAuthenticatedViews();
+  closeReceiptModal();
 
   if ($("session-loading")) $("session-loading").hidden = true;
   $("login-panel").hidden = false;
@@ -743,7 +744,19 @@ async function rejectPaymentAction(orderId, folio) {
 }
 
 // Receipt Modal Handler
+function closeReceiptModal() {
+  const modal = $("modal-receipt");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("hidden", "");
+  }
+}
+
 function openReceiptModal(orderId, folio) {
+  if (!currentUser) {
+    flash("Inicia sesión para adjuntar o inspeccionar comprobantes.", "error");
+    return;
+  }
   currentModalOrderId = orderId;
   const modal = $("modal-receipt");
   if (!modal) return;
@@ -751,6 +764,7 @@ function openReceiptModal(orderId, folio) {
   const preview = $("receipt-preview-container");
   preview.replaceChildren(node("p", "Buscando comprobante adjunto…", "muted"));
   modal.hidden = false;
+  modal.removeAttribute("hidden");
 
   api(`/api/orders/${orderId}/receipt-url`)
     .then(data => {
@@ -778,8 +792,23 @@ function openReceiptModal(orderId, folio) {
     });
 }
 
-if ($("modal-receipt-close")) $("modal-receipt-close").onclick = () => { $("modal-receipt").hidden = true; };
-if ($("modal-receipt-cancel")) $("modal-receipt-cancel").onclick = () => { $("modal-receipt").hidden = true; };
+if ($("modal-receipt-close")) $("modal-receipt-close").onclick = closeReceiptModal;
+if ($("modal-receipt-cancel")) $("modal-receipt-cancel").onclick = closeReceiptModal;
+
+const modalBackdropEl = $("modal-receipt");
+if (modalBackdropEl) {
+  modalBackdropEl.onclick = (e) => {
+    if (e.target === modalBackdropEl) {
+      closeReceiptModal();
+    }
+  };
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeReceiptModal();
+  }
+});
 
 if ($("modal-receipt-submit")) {
   $("modal-receipt-submit").onclick = async () => {
@@ -800,7 +829,7 @@ if ($("modal-receipt-submit")) {
           bank_reference: $("receipt-bank-ref").value || null
         });
         flash("Comprobante subido y asociado con éxito al pedido.", "success");
-        $("modal-receipt").hidden = true;
+        closeReceiptModal();
         fileInput.value = "";
         orders(true);
       } catch (err) {
@@ -1002,5 +1031,6 @@ if ($("logout")) {
 
 // Start on load
 window.addEventListener("DOMContentLoaded", () => {
+  closeReceiptModal();
   checkSession();
 });
