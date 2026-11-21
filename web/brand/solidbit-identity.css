@@ -1,0 +1,124 @@
+/* SolidBit Brand Identity — reusable presentation layer v1.0
+   Source vectors: user's supplied SolidBit_Brand_Assets_SVG.zip.
+   Design tokens live in solidbit-corporate.css; feature layouts live in
+   solidbit-inbox.css. This layer owns only brand placement and watermarks.
+*/
+:root {
+  --sb-brand-navy: #101A2B;
+  --sb-brand-ink: #30343A;
+  --sb-brand-watermark-size: clamp(280px, 38vw, 510px);
+}
+.sidebar .brand.sb-brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 0 4px;
+  margin-bottom: 29px;
+}
+.sidebar .brand.sb-brand-lockup .sb-brand-lockup__logo {
+  display: block;
+  width: 194px !important;
+  height: auto !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 11px;
+  background: #fff;
+  padding: 5px 10px !important;
+  object-fit: contain;
+}
+.sidebar .brand.sb-brand-lockup .brand-sub {
+  color: #9eafc2;
+  font-size: .73rem;
+  line-height: 1.4;
+  letter-spacing: .025em;
+  padding-left: 2px;
+}
+#modal-login img.sb-login-logo {
+  display: block;
+  width: min(238px, 100%) !important;
+  height: auto !important;
+  border: 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  object-fit: contain;
+  margin: 2px auto 15px !important;
+}
+/* Dashboard logo treatment is owned by the summary panel. */
+.dashboard-recent-panel {
+  position: relative;
+  isolation: isolate;
+}
+.dashboard-recent-panel::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  inset: 100px 14px 12px 25%;
+  background: url("/brand/solidbit-isotype-gray.svg") no-repeat right center / contain;
+}
+.dashboard-recent-panel > * {
+  position: relative;
+  z-index: 1;
+}
+/* Separate chats: the official low-contrast isotype is permanently visible
+   behind the transparent transcript, never as a message or clickable layer. */
+.inbox-detail-panel {
+  position: relative;
+  isolation: isolate;
+  background-color: #f8f9fa;
+}
+.inbox-detail-panel::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  top: 79px;
+  bottom: 44px;
+  left: 14%;
+  right: 3%;
+  background-image: url("/brand/solidbit-isotype-gray.svg");
+  background-position: 67% 52%;
+  background-size: var(--sb-brand-watermark-size) auto;
+  background-repeat: no-repeat;
+  opacity: 1; /* SVG already has 10% intrinsic fill opacity. */
+}
+.inbox-detail-panel > .inbox-detail-header,
+.inbox-detail-panel > .inbox-history-control,
+.inbox-detail-panel > .inbox-readonly-footer {
+  position: relative;
+  z-index: 2;
+}
+.inbox-detail-panel > .inbox-detail-header,
+.inbox-detail-panel > .inbox-readonly-footer {
+  background: #fff;
+}
+.inbox-detail-panel > .inbox-history-control {
+  background: transparent;
+}
+.inbox-detail-panel > .inbox-transcript {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+.inbox-detail-panel .inbox-message {
+  position: relative;
+  z-index: 1;
+}
+@media (max-width: 860px) {
+  :root { --sb-brand-watermark-size: min(76vw, 350px); }
+  .inbox-detail-panel::before {
+    top: 76px;
+    bottom: 45px;
+    left: 0;
+    right: 0;
+    background-position: center 53%;
+  }
+  .dashboard-recent-panel::before {
+    inset: 92px 10px 10px 24%;
+  }
+}
+@media (forced-colors: active) {
+  .inbox-detail-panel::before,
+  .dashboard-recent-panel::before { display: none; }
+}

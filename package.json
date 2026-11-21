@@ -1,0 +1,49 @@
+{
+  "name": "solidbit-automatizacion-wa-01",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env.local scripts/run-local-stack.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "worker:test": "node --experimental-strip-types --test cloudflare/kapso-webhook/test/*.test.ts",
+    "worker:deploy": "npm --prefix cloudflare/kapso-webhook run deploy",
+    "crm:test": "node --experimental-strip-types --test cloudflare/crm-app/test/crm-app.test.ts",
+    "crm:deploy": "npm --prefix cloudflare/crm-app run deploy",
+    "notifier:test": "node --experimental-strip-types --test cloudflare/crm-notifier/test/notifier.test.ts",
+    "notifier:deploy": "npm --prefix cloudflare/crm-notifier run deploy",
+    "test:all": "npm test && npm run worker:test && npm run crm:test && npm run notifier:test",
+    "security:scan": "node scripts/secret-scan.mjs --tracked",
+    "security:staged": "node scripts/secret-scan.mjs --staged",
+    "security:setup": "node scripts/setup-hooks.mjs",
+    "lint:syntax": "node scripts/static-check.mjs",
+    "audit:local": "node scripts/local-audit.mjs",
+    "setup:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-local.ps1",
+    "sync:orders": "node --env-file-if-exists=.env.local scripts/sync-orders.mjs",
+    "sync:watch": "node --env-file-if-exists=.env.local scripts/sync-orders.mjs --watch",
+    "notify:once": "node --env-file-if-exists=.env.local scripts/notify-handoff.mjs",
+    "notify:watch": "node --env-file-if-exists=.env.local scripts/notify-handoff.mjs --watch",
+    "kapso:embeds": "node --env-file-if-exists=.env.local scripts/create-kapso-embeds.mjs",
+    "start:remote": "node --env-file-if-exists=.env.local src/remote/server.js",
+    "bootstrap:remote": "node --env-file-if-exists=.env.local scripts/bootstrap-supabase.mjs --confirm",
+    "menu:link": "node --env-file-if-exists=.env.local scripts/link-existing-menu.mjs --confirm",
+    "reconcile:remote": "node --env-file-if-exists=.env.local scripts/reconcile-remote-orders.mjs",
+    "reconcile:watch": "node --env-file-if-exists=.env.local scripts/reconcile-remote-orders.mjs --watch",
+    "start:stack": "node --env-file-if-exists=.env.local scripts/run-local-stack.mjs",
+    "notify:remote": "node --env-file-if-exists=.env.local scripts/notify-remote-handoffs.mjs",
+    "notify:remote:watch": "node --env-file-if-exists=.env.local scripts/notify-remote-handoffs.mjs --watch",
+    "staff:kapso-assign": "node --env-file-if-exists=.env.local scripts/set-worker-assignee.mjs --confirm",
+    "doctor:remote": "node --env-file-if-exists=.env.local scripts/doctor-remote.mjs",
+    "security:rls": "node --env-file-if-exists=.env.local scripts/check-supabase-rls.mjs",
+    "qa:remote-http": "node --env-file-if-exists=.env.local scripts/remote-http-e2e.mjs",
+    "audit:full": "node --env-file-if-exists=.env.local scripts/full-audit.mjs",
+    "start:offline": "node --env-file-if-exists=.env.local src/local/server.js"
+  },
+  "description": "Solid Bit Demo CRM & Automatización WhatsApp para Mr. Burger",
+  "devDependencies": {
+    "puppeteer-core": "^25.18.1"
+  }
+}

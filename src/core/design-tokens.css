@@ -1,0 +1,20 @@
+/* Tokens seleccionados y desacoplados de:
+   Smart WHA public/brand/solidbit-console.css
+   y public/brand/solidbit-corporate.css.
+   No importar las hojas enteras: dependen de IDs y módulos ajenos.
+*/
+:root {
+  color-scheme: light;
+  --crm-canvas: #f5f7fb;
+  --crm-surface: #fff;
+  --crm-text: #101827;
+  --crm-muted: #737f91;
+  --crm-border: #e6eaf1;
+  --crm-primary: #215ff4;
+  --crm-primary-soft: #eaf0ff;
+  --crm-success: #168a54;
+  --crm-warning: #a56916;
+  --crm-danger: #b83f43;
+  --crm-radius: 14px;
+  --crm-shadow: 0 4px 20px rgba(17,32,62,.045);
+}

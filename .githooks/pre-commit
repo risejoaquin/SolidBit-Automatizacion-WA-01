@@ -1,0 +1,3 @@
+#!/bin/sh
+# Repo security hook. Installation: npm run security:setup
+node scripts/secret-scan.mjs --staged || exit 1

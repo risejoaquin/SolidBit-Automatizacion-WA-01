@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CRM</title><link rel="stylesheet" href="/style.css"></head><body>
+<main class="container">
+<header><h1>CRM</h1><span id="user"></span></header>
+<section id="login-panel" class="card"><h2>Iniciar sesión</h2><form id="login-form"><label>Correo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button>Entrar</button></form></section>
+<section id="dashboard" hidden><nav><button id="nav-inventory">Inventario</button><button id="nav-handoff">Atención humana</button><button id="logout">Cerrar sesión</button></nav>
+<div id="inventory-view" class="card"><h2>Inventario</h2><p>Existencias y alertas por nivel mínimo</p><div id="stock-alerts" aria-live="polite"></div><form id="product-form" class="inline"><input name="sku" placeholder="SKU" required><input name="name" placeholder="Producto" required><input name="quantity" type="number" step="0.001" min="0" placeholder="Cantidad" required><input name="minimum" type="number" step="0.001" min="0" placeholder="Mínimo" required><button>Agregar producto</button></form><div id="products"></div></div>
+<div id="handoff-view" class="card" hidden><h2>Atención humana</h2><p id="handoff-status">Comprobando integración…</p><div class="placeholder">El chat embebido de Kapso se habilitará cuando se valide su autenticación y el filtro de delegaciones.</div></div>
+</section><p id="message" role="status" aria-live="polite"></p></main>
+<script type="module" src="/app.js"></script></body></html>

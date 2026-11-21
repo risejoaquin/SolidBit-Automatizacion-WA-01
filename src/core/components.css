@@ -1,0 +1,15 @@
+/* Componentes visuales extraídos y simplificados de
+   Smart WHA public/brand/solidbit-console.css y corporate.css. */
+.crm-shell { min-height:100dvh; background:var(--crm-canvas); color:var(--crm-text); font: 400 15px/1.5 Inter,system-ui,sans-serif; }
+.crm-layout { display:grid; grid-template-columns:242px minmax(0,1fr); min-height:100dvh; }
+.crm-sidebar { background:var(--crm-surface); border-right:1px solid var(--crm-border); padding:28px 14px; }
+.crm-main { min-width:0; padding:clamp(16px,2.2vw,38px); }
+.crm-card { background:var(--crm-surface); border:1px solid var(--crm-border); border-radius:var(--crm-radius); box-shadow:var(--crm-shadow); padding:20px; }
+.crm-nav-link { display:flex; padding:12px 14px; color:#404a5e; border-radius:11px; text-decoration:none; }
+.crm-nav-link:hover,.crm-nav-link[aria-current="page"] { background:var(--crm-primary-soft); color:var(--crm-primary); }
+.crm-button { min-height:42px; border:1px solid var(--crm-border); background:var(--crm-surface); color:var(--crm-text); border-radius:10px; padding:10px 14px; cursor:pointer; }
+.crm-button--primary { background:var(--crm-primary); border-color:var(--crm-primary); color:white; }
+.crm-field { min-height:46px; padding:12px; border:1px solid var(--crm-border); border-radius:10px; background:white; color:var(--crm-text); width:100%; font:inherit; }
+.crm-alert--low { color:var(--crm-danger); background:#fff1f1; border:1px solid #f1cdcd; padding:10px 12px; border-radius:10px; }
+.crm-shell :where(button,a,input,select):focus-visible { outline:3px solid #619cc8; outline-offset:3px; }
+@media(max-width:760px) { .crm-layout { grid-template-columns:minmax(0,1fr); } .crm-sidebar { border-right:0; border-bottom:1px solid var(--crm-border); padding:12px; } .crm-main {padding:16px;} }

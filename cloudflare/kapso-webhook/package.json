@@ -1,0 +1,18 @@
+{
+  "name": "crm-kapso-webhook",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for receiving signed Kapso handoff webhooks and syncing to Supabase",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.109.0"
+  }
+}
