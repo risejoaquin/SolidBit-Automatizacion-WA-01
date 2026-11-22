@@ -308,9 +308,15 @@ export async function handleRequest(
       });
     }
 
-    // GET /api/handoff
-    if (method === "GET" && url.pathname === "/api/handoff") {
-      const requestedConvId = url.searchParams.get("conversation_id")?.trim() || null;
+    // Both CRM inbox views resolve to the same authenticated, role-checked embed.
+    if (
+      method === "GET" &&
+      (url.pathname === "/api/handoff" || url.pathname === "/api/inbox-embed")
+    ) {
+      const requestedConvId =
+        url.searchParams.get("conversation_id")?.trim() ||
+        url.searchParams.get("target_conversation_id")?.trim() ||
+        null;
       let targetConversation: {
         id: string;
         found: boolean;
