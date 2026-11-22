@@ -1945,3 +1945,179 @@ test("39. Reintentos de actualización de estado (PATCH /api/orders/:id/status):
   // Zero duplicate notifications created
   assert.equal(notificationCount, 0);
 });
+
+test("40. Rutas Inbox: GET /api/inbox-embed y GET /api/handoff comparten autenticación, lógica y soporte de target_conversation_id", async () => {
+  const ownerCookie = await makeCookie("owner");
+
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_sessions")) {
+      const match = u.match(/id=eq\.([^&]+)/);
+      const sess = match ? inMemorySessions.get(match[1]) : null;
+      return new Response(JSON.stringify(sess ? [sess] : []), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_memberships")) {
+      return new Response(JSON.stringify([{ business_id: TEST_BUSINESS_ID, role: "owner", active: true }]), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_handoffs")) {
+      return new Response(JSON.stringify([{
+        conversation_id: "7d73c107-795f-4856-8285-934721f21c1e",
+        assigned_user_id: "assignee-worker-1",
+        state: "assigned",
+        reason: "Consulta cliente"
+      }]), { status: 200 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  // 1. Sin sesión: ambos endpoints deben devolver 401 (NUNCA 404 "Ruta no encontrada")
+  const unauthInbox = await handleRequest(
+    new Request("https://crm.local/api/inbox-embed", { method: "GET" }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(unauthInbox.status, 401, "/api/inbox-embed sin sesión debe responder 401");
+
+  const unauthHandoff = await handleRequest(
+    new Request("https://crm.local/api/handoff", { method: "GET" }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(unauthHandoff.status, 401, "/api/handoff sin sesión debe responder 401");
+
+  // 2. Owner autenticado: GET /api/inbox-embed
+  const authInboxRes = await handleRequest(
+    new Request("https://crm.local/api/inbox-embed", { method: "GET", headers: { Cookie: ownerCookie } }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(authInboxRes.status, 200);
+  const inboxData = (await authInboxRes.json()) as any;
+  assert.equal(inboxData.status, "ready");
+  assert.equal(inboxData.embed_url, "https://inbox.kapso.ai/embed/owner-mock-token");
+
+  // 3. Compatibilidad: GET /api/handoff
+  const authHandoffRes = await handleRequest(
+    new Request("https://crm.local/api/handoff", { method: "GET", headers: { Cookie: ownerCookie } }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(authHandoffRes.status, 200);
+  const handoffData = (await authHandoffRes.json()) as any;
+  assert.deepEqual(inboxData, handoffData, "Ambas rutas deben retornar la misma respuesta exacta");
+
+  // 4. Parámetro target_conversation_id en /api/inbox-embed
+  const targetId = "7d73c107-795f-4856-8285-934721f21c1e";
+  const targetInboxRes = await handleRequest(
+    new Request(`https://crm.local/api/inbox-embed?target_conversation_id=${targetId}`, {
+      method: "GET",
+      headers: { Cookie: ownerCookie }
+    }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(targetInboxRes.status, 200);
+  const targetInboxData = (await targetInboxRes.json()) as any;
+  assert.equal(targetInboxData.target_conversation?.id, targetId);
+  assert.equal(targetInboxData.target_conversation?.authorized, true);
+
+  // Parámetro conversation_id en /api/handoff debe ser equivalente
+  const convHandoffRes = await handleRequest(
+    new Request(`https://crm.local/api/handoff?conversation_id=${targetId}`, {
+      method: "GET",
+      headers: { Cookie: ownerCookie }
+    }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(convHandoffRes.status, 200);
+  const convHandoffData = (await convHandoffRes.json()) as any;
+  assert.deepEqual(targetInboxData, convHandoffData, "target_conversation_id y conversation_id deben procesarse idénticamente");
+
+  // 5. Validación de formato de conversación inválida
+  const invalidRes = await handleRequest(
+    new Request("https://crm.local/api/inbox-embed?target_conversation_id=invalid<script>", {
+      method: "GET",
+      headers: { Cookie: ownerCookie }
+    }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(invalidRes.status, 400);
+  const invalidData = (await invalidRes.json()) as any;
+  assert.equal(invalidData.error, "Identificador de conversación inválido");
+});
+
+test("41. Aislamiento Worker en Inbox: GET /api/inbox-embed respeta aprobación pendiente y autorización de conversaciones", async () => {
+  const workerCookie = await makeCookie("worker");
+
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_sessions")) {
+      const match = u.match(/id=eq\.([^&]+)/);
+      const sess = match ? inMemorySessions.get(match[1]) : null;
+      return new Response(JSON.stringify(sess ? [sess] : []), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_memberships")) {
+      return new Response(JSON.stringify([{
+        business_id: TEST_BUSINESS_ID,
+        role: "worker",
+        active: true,
+        kapso_assignee_id: "assignee-worker-1"
+      }]), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_handoffs")) {
+      if (u.includes("conv-other-agent")) {
+        return new Response(JSON.stringify([{
+          conversation_id: "conv-other-agent",
+          assigned_user_id: "assignee-different-person",
+          state: "assigned",
+          reason: "Caso asignado a otro agente"
+        }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  // 1. Worker con KAPSO_WORKER_EMBED_APPROVED = "false" -> pending_integration, nunca URL de owner
+  const unapprovedRes = await handleRequest(
+    new Request("https://crm.local/api/inbox-embed", { method: "GET", headers: { Cookie: workerCookie } }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(unapprovedRes.status, 200);
+  const unapprovedData = (await unapprovedRes.json()) as any;
+  assert.equal(unapprovedData.status, "pending_integration");
+  assert.equal(unapprovedData.embed_url, undefined);
+
+  // 2. Worker intentando acceder a conversación de otro agente -> authorized: false
+  const otherAgentRes = await handleRequest(
+    new Request("https://crm.local/api/inbox-embed?target_conversation_id=conv-other-agent", {
+      method: "GET",
+      headers: { Cookie: workerCookie }
+    }),
+    testEnv,
+    mockFetch
+  );
+  assert.equal(otherAgentRes.status, 200);
+  const otherData = (await otherAgentRes.json()) as any;
+  assert.equal(otherData.target_conversation?.authorized, false);
+  assert.equal(otherData.target_conversation?.message, "Esta conversación está asignada a otro agente.");
+
+  // 3. Worker con aprobación activada (approvedEnv) -> recibe URL de worker con filtros, nunca token owner
+  const approvedEnv: Env = {
+    ...testEnv,
+    KAPSO_WORKER_EMBED_APPROVED: "true"
+  };
+  const approvedRes = await handleRequest(
+    new Request("https://crm.local/api/inbox-embed", { method: "GET", headers: { Cookie: workerCookie } }),
+    approvedEnv,
+    mockFetch
+  );
+  assert.equal(approvedRes.status, 200);
+  const approvedData = (await approvedRes.json()) as any;
+  assert.equal(approvedData.status, "ready");
+  assert.ok(approvedData.embed_url.includes("worker-mock-token"));
+  assert.ok(!approvedData.embed_url.includes("owner-mock-token"));
+});
