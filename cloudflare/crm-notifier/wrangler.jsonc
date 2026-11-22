@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "solidbit-crm-notifier-demo",
+  "name": "crm-kapso-notifier",
   "main": "src/index.ts",
   "compatibility_date": "2025-02-14",
   "compatibility_flags": [
@@ -14,7 +14,7 @@
   "vars": {
     "SUPABASE_URL": "https://gplewdvxxldfvmeintvu.supabase.co",
     "CRM_BUSINESS_ID": "1c2238f8-863a-4e33-8b5b-5b5e4683e190",
-    "KAPSO_PHONE_NUMBER_ID": "597907523413541",
+    "KAPSO_PHONE_NUMBER_ID": "1462335776957834",
     "KAPSO_HANDOFF_TEMPLATE": "crm_handoff_alert",
     "KAPSO_HANDOFF_TEMPLATE_LANGUAGE": "es_MX",
     "ENABLE_KAPSO_HANDOFF_NOTICES": "false",
