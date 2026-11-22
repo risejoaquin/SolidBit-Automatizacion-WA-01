@@ -1,15 +1,15 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "solidbit-kapso-webhook-demo",
+  "name": "crm-kapso-webhook",
   "main": "src/index.ts",
   "compatibility_date": "2025-02-14",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "SUPABASE_URL": "https://gplewdvxxldfvmeintvu.supabase.co",
-    "KAPSO_PROJECT_ID": "7edf4d72-e0af-4b96-939f-08a44014bb88",
+    "KAPSO_PROJECT_ID": "ec3a2550-9cf1-43c9-bac2-841516751f25",
     "CRM_BUSINESS_ID": "1c2238f8-863a-4e33-8b5b-5b5e4683e190",
     "KAPSO_WORKER_ASSIGNEE_ID": "6ef337c0-c724-4cd4-85ae-0c6068495840",
-    "KAPSO_PHONE_NUMBER_ID": "597907523413541",
+    "KAPSO_PHONE_NUMBER_ID": "1462335776957834",
     "WORKER_VERSION": "1.0.0-demo",
     "ENVIRONMENT": "production"
   }
