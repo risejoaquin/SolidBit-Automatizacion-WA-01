@@ -2196,11 +2196,13 @@ test("44. Envío de imágenes del menú: categoría 'all' envía ambas páginas 
   const data = (await res.json()) as any;
   assert.equal(data.ok, true);
   assert.deepEqual(data.sent, ["page_1", "page_2"]);
-  assert.equal(data.reply_text, "Claro, aquí está el menú 🍔");
+  assert.equal(data.reply_text, undefined);
   assert.equal(sentPayloads.length, 2);
   assert.equal(sentPayloads[0].to, "526621234567");
   assert.ok(sentPayloads[0].image.link.includes("mr-burger-hamburguesas-boneless-complementos.png"));
+  assert.equal(sentPayloads[0].image.caption, undefined);
   assert.ok(sentPayloads[1].image.link.includes("mr-burger-bebidas-extras-postres.png"));
+  assert.equal(sentPayloads[1].image.caption, undefined);
 });
 
 test("45. Envío de imágenes del menú: categorías específicas envían solo la página solicitada", async () => {
