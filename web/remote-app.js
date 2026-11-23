@@ -851,36 +851,65 @@ if ($("modal-receipt-submit")) {
 // 7. SECTION 4: MENÚ Y CATÁLOGO
 // ==========================================
 
+let editingMenuSku = null;
 const toggleAddProductBtn = $("btn-toggle-add-product");
 const addProductPanel = $("add-product-panel");
-if (toggleAddProductBtn && addProductPanel) {
-  toggleAddProductBtn.onclick = () => {
-    addProductPanel.hidden = !addProductPanel.hidden;
-    if (!addProductPanel.hidden) {
-      addProductPanel.scrollIntoView({ behavior: "smooth" });
-    }
-  };
-  $("btn-cancel-add-product").onclick = () => { addProductPanel.hidden = true; };
+const menuForm = $("menu-form");
+
+function openMenuForm(product = null) {
+  if (!menuForm || !addProductPanel) return;
+  editingMenuSku = product?.sku || null;
+  menuForm.reset();
+  menuForm.elements.sku.readOnly = Boolean(product);
+  menuForm.elements.sku.value = product?.sku || "";
+  menuForm.elements.category.value = product?.category || "Hamburguesas";
+  menuForm.elements.name.value = product?.name || "";
+  menuForm.elements.price.value = product ? (Number(product.price_cents) / 100).toFixed(2) : "";
+  menuForm.elements.description.value = product?.description || "";
+  menuForm.elements.active.checked = product ? Boolean(product.active) : true;
+  $("menu-form-title").textContent = product ? "Editar producto" : "Nuevo producto en el menú";
+  $("menu-form-submit").textContent = product ? "Guardar cambios" : "Guardar en el menú";
+  addProductPanel.hidden = false;
+  addProductPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-if ($("menu-form")) {
-  $("menu-form").onsubmit = async e => {
+if (toggleAddProductBtn && addProductPanel) {
+  toggleAddProductBtn.onclick = () => {
+    if (addProductPanel.hidden) openMenuForm();
+    else addProductPanel.hidden = true;
+  };
+  $("btn-cancel-add-product").onclick = () => {
+    editingMenuSku = null;
+    menuForm.reset();
+    menuForm.elements.sku.readOnly = false;
+    addProductPanel.hidden = true;
+  };
+}
+
+if (menuForm) {
+  menuForm.onsubmit = async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const priceCents = Math.round(Number(fd.get("price")) * 100);
     const body = {
       sku: fd.get("sku"),
       category: fd.get("category"),
       name: fd.get("name"),
-      price_cents: priceCents,
+      price_cents: Math.round(Number(fd.get("price")) * 100),
       description: fd.get("description"),
       active: fd.get("active") === "on"
     };
 
     try {
-      await api("/api/menu", "POST", body);
-      flash("Producto agregado al menú exitosamente.", "success");
+      if (editingMenuSku) {
+        await api(`/api/menu/${encodeURIComponent(editingMenuSku)}`, "PATCH", body);
+        flash("Cambios del producto guardados.", "success");
+      } else {
+        await api("/api/menu", "POST", body);
+        flash("Producto agregado al menú.", "success");
+      }
+      editingMenuSku = null;
       e.target.reset();
+      e.target.elements.sku.readOnly = false;
       addProductPanel.hidden = true;
       await menu();
     } catch (err) {
@@ -949,7 +978,7 @@ function renderMenu() {
       // Description
       const desc = node("p", p.description || "Sin descripción adicional.", "menu-card-desc");
 
-      // Footer: SKU + Status + Toggle Button
+      // Footer: edit, activate/deactivate, and archive actions.
       const footer = node("div", "", "menu-card-footer");
       const leftInfo = node("div", "");
       leftInfo.append(
@@ -957,10 +986,17 @@ function renderMenu() {
         node("span", p.active ? "Activo" : "Inactivo", "badge " + (p.active ? "badge-delivered" : "badge-cancelled"))
       );
 
+      const actions = node("div", "");
+      actions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end";
+      const editBtn = node("button", "Editar", "btn-secondary btn-sm");
+      editBtn.type = "button";
+      editBtn.onclick = () => openMenuForm(p);
+
       const toggleBtn = node("button", p.active ? "Desactivar" : "Activar", "btn-secondary btn-sm");
+      toggleBtn.type = "button";
       toggleBtn.onclick = async () => {
         try {
-          await api(`/api/menu/${p.sku}`, "PATCH", { active: !p.active });
+          await api(`/api/menu/${encodeURIComponent(p.sku)}`, "PATCH", { active: !p.active });
           p.active = !p.active;
           flash(`Producto ${p.name} marcado como ${p.active ? "activo" : "inactivo"}.`, "success");
           renderMenu();
@@ -969,7 +1005,22 @@ function renderMenu() {
         }
       };
 
-      footer.append(leftInfo, toggleBtn);
+      const archiveBtn = node("button", "Archivar", "btn-secondary btn-sm");
+      archiveBtn.type = "button";
+      archiveBtn.title = "Archiva el producto para conservar el historial de pedidos";
+      archiveBtn.onclick = async () => {
+        if (!window.confirm(`¿Archivar ${p.name} y retirarlo del menú activo? El historial de pedidos se conservará.`)) return;
+        try {
+          await api(`/api/menu/${encodeURIComponent(p.sku)}`, "DELETE");
+          flash(`Producto ${p.name} archivado; el historial se conservó.`, "success");
+          await menu();
+        } catch (err) {
+          flash(err.message || "Error al eliminar producto");
+        }
+      };
+
+      actions.append(editBtn, toggleBtn, archiveBtn);
+      footer.append(leftInfo, actions);
       card.append(header, desc, footer);
       grid.append(card);
     }
