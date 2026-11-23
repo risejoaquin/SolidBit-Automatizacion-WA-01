@@ -998,14 +998,14 @@ function renderMenu() {
         }
       };
 
-      const archiveBtn = node("button", "Eliminar", "btn-secondary btn-sm");
+      const archiveBtn = node("button", "Archivar", "btn-secondary btn-sm");
       archiveBtn.type = "button";
       archiveBtn.title = "Archiva el producto para conservar el historial de pedidos";
       archiveBtn.onclick = async () => {
-        if (!window.confirm(`¿Eliminar ${p.name} del menú activo? Se conservará en el historial de pedidos.`)) return;
+        if (!window.confirm(`¿Archivar ${p.name} y retirarlo del menú activo? El historial de pedidos se conservará.`)) return;
         try {
           await api(`/api/menu/${encodeURIComponent(p.sku)}`, "DELETE");
-          flash(`Producto ${p.name} retirado del menú activo.`, "success");
+          flash(`Producto ${p.name} archivado; el historial se conservó.`, "success");
           await menu();
         } catch (err) {
           flash(err.message || "Error al eliminar producto");
