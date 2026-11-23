@@ -338,14 +338,12 @@ export async function handleRequest(
       key: "page_1",
       name: "Hamburguesas, Boneless y Complementos",
       url: `${crmOrigin}/menu/mr-burger-hamburguesas-boneless-complementos.png`,
-      caption: "🍔 Mr. Burger · Hamburguesas, Boneless y Complementos"
     };
 
     const page2 = {
       key: "page_2",
       name: "Bebidas, Extras y Postres",
       url: `${crmOrigin}/menu/mr-burger-bebidas-extras-postres.png`,
-      caption: "🥤 Mr. Burger · Bebidas, Extras y Postres"
     };
 
     let pagesToSend: typeof page1[] = [];
@@ -371,8 +369,7 @@ export async function handleRequest(
         to: whatsappRecipient,
         type: "image",
         image: {
-          link: page.url,
-          caption: page.caption
+          link: page.url
         }
       };
 
@@ -416,8 +413,7 @@ export async function handleRequest(
     return jsonResponse(200, {
       ok: true,
       sent,
-      message_ids: messageIds,
-      reply_text: "Claro, aquí está el menú 🍔"
+      message_ids: messageIds
     });
   }
 
