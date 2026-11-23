@@ -941,8 +941,14 @@ export async function handleRequest(
     if (!name || name.length < 2 || name.length > 200) {
       return jsonResponse(400, { error: "El nombre del producto es obligatorio (2-200 caracteres)" });
     }
-    if (!Number.isFinite(priceCents) || priceCents < 0) {
-      return jsonResponse(400, { error: "El precio en centavos debe ser un valor positivo" });
+    if (!Number.isSafeInteger(priceCents) || priceCents <= 0) {
+      return jsonResponse(400, { error: "El precio debe ser mayor que cero" });
+    }
+    if (!category || category.length > 80) {
+      return jsonResponse(400, { error: "La categoría es obligatoria (máximo 80 caracteres)" });
+    }
+    if (description.length > 1000) {
+      return jsonResponse(400, { error: "La descripción no puede superar 1000 caracteres" });
     }
 
     const created = await supabaseRequest<any[]>(
@@ -983,12 +989,24 @@ export async function handleRequest(
     if (body.active !== undefined) updates.active = Boolean(body.active);
     if (body.price_cents !== undefined) {
       const p = Math.round(Number(body.price_cents));
-      if (!Number.isFinite(p) || p < 0) return jsonResponse(400, { error: "Precio inválido" });
+      if (!Number.isSafeInteger(p) || p <= 0) return jsonResponse(400, { error: "El precio debe ser mayor que cero" });
       updates.price_cents = p;
     }
-    if (body.name !== undefined) updates.name = String(body.name).trim();
-    if (body.description !== undefined) updates.description = String(body.description).trim();
-    if (body.category !== undefined) updates.category = String(body.category).trim();
+    if (body.name !== undefined) {
+      const name = String(body.name).trim();
+      if (name.length < 2 || name.length > 200) return jsonResponse(400, { error: "El nombre debe tener entre 2 y 200 caracteres" });
+      updates.name = name;
+    }
+    if (body.description !== undefined) {
+      const description = String(body.description).trim();
+      if (description.length > 1000) return jsonResponse(400, { error: "La descripción no puede superar 1000 caracteres" });
+      updates.description = description;
+    }
+    if (body.category !== undefined) {
+      const category = String(body.category).trim();
+      if (!category || category.length > 80) return jsonResponse(400, { error: "La categoría es obligatoria (máximo 80 caracteres)" });
+      updates.category = category;
+    }
 
     if (Object.keys(updates).length === 0) {
       return jsonResponse(400, { error: "Sin campos para actualizar" });
@@ -1012,6 +1030,30 @@ export async function handleRequest(
     }
 
     return jsonResponse(200, { ok: true, product: updated[0] });
+  }
+
+  // DELETE /api/menu/:sku archives the product to preserve order history.
+  if (method === "DELETE" && menuSkuMatch) {
+    if (user.role !== "owner" && user.role !== "manager") {
+      return jsonResponse(403, { error: "Acceso denegado: se requiere rol administrativo para modificar el menú" });
+    }
+    const targetSku = menuSkuMatch[1].toLowerCase();
+    const archived = await supabaseRequest<any[]>(
+      "/rest/v1/menu_products",
+      {
+        method: "PATCH",
+        privileged: true,
+        prefer: "return=representation",
+        query: { sku: "eq." + targetSku },
+        body: { active: false }
+      },
+      sbConfig,
+      fetchFn
+    );
+    if (!archived || archived.length === 0) {
+      return jsonResponse(404, { error: "Producto no encontrado en el menú" });
+    }
+    return jsonResponse(200, { ok: true, archived: true, product: archived[0] });
   }
 
   // All remaining routes require "owner" role
