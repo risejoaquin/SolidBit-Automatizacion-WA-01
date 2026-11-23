@@ -214,26 +214,20 @@
 
     <!-- Formulario para agregar producto (desplegable) -->
     <div id="add-product-panel" class="form-card" hidden>
-      <h3>Nuevo Producto en el Menú</h3>
+      <h3 id="menu-form-title">Nuevo producto en el menú</h3>
       <form id="menu-form">
         <div class="form-grid">
           <label>Código SKU
             <input name="sku" type="text" placeholder="ej. clasica-doble" required maxlength="80">
           </label>
           <label>Categoría
-            <select name="category" required>
-              <option value="Hamburguesas">Hamburguesas</option>
-              <option value="Combos">Combos</option>
-              <option value="Complementos">Complementos</option>
-              <option value="Bebidas">Bebidas</option>
-              <option value="Postres">Postres</option>
-            </select>
+            <input name="category" type="text" placeholder="ej. Hamburguesas, Bebidas o Boneless" required maxlength="80">
           </label>
           <label>Nombre del producto
             <input name="name" type="text" placeholder="ej. Clásica Doble con Queso" required maxlength="200">
           </label>
           <label>Precio en pesos ($ MXN)
-            <input name="price" type="number" step="1" min="0" placeholder="135" required>
+            <input name="price" type="number" step="0.01" min="0.01" placeholder="135.00" required>
           </label>
         </div>
         <label>Descripción detallada
@@ -246,7 +240,7 @@
           </label>
           <div style="margin-left:auto;display:flex;gap:8px;">
             <button type="button" id="btn-cancel-add-product" class="btn-secondary">Cancelar</button>
-            <button type="submit" class="btn-primary">Guardar en el Menú</button>
+            <button id="menu-form-submit" type="submit" class="btn-primary">Guardar en el menú</button>
           </div>
         </div>
       </form>
