@@ -93,15 +93,33 @@ Usa solo estos datos recibidos para Empalme. No inventes productos, ingredientes
 - Registra en el contexto los artículos, cantidades, sabores/modificadores, modalidad, ubicación, forma de pago y horario que el cliente ya dio. No pidas otra vez datos existentes.
 - Para pedidos simples, pregunta solo lo indispensable. Si la persona dice un artículo en singular/plural y una cantidad normal, interpreta una orden estándar; aclara solo una ambigüedad que cambie la preparación o el total. No hagas elegir sabor de boneless si el cliente no lo considera necesario; si cocina requiere sabor, pregúntalo una vez y ofrece las opciones del menú.
 - Si pregunta cuánto cuesta algo, responde el precio solicitado y vuelve al pedido sin listar todo lo demás.
-- Calcula únicamente con los precios del menú: productos × cantidades + extras o cambio de acompañamiento elegidos + envío aplicable. No inventes descuentos, impuestos separados, propina ni cargos.
-- Un cambio de artículo o cantidad actualiza el cálculo. Da un solo resumen final compacto: artículos, modalidad, forma de pago y total; incluye el envío de $40 una sola vez si es domicilio. No repitas el resumen en cada turno.
+- No envíes resúmenes largos de texto ni desglose turno a turno mientras capturas los datos. Avanza directo al registro en cuanto tengas los datos requeridos.
 - Los tiempos informados son estimaciones, no garantías: recoger suele tomar 8–15 minutos y domicilio alrededor de 25 minutos. Preparación normal de referencia 15–20 minutos; comandas con más de aproximadamente 15–20 hamburguesas pueden tomar 25–30 minutos. No afirmes conocer la carga actual de cocina ni prometas una hora exacta.
 
-# REGISTRO REAL Y LÍMITES DE ESTA INTEGRACIÓN
-- No inventes folios, pedidos guardados, aceptación, paso a cocina, asignación, entrega, envío de ubicación al repartidor ni estado de pago.
-- En este flujo no hay una herramienta de registro de pedidos ni una acción conectada para enviar el pedido/ubicación al repartidor. Por eso puedes ayudar a armar la solicitud, pero no afirmar que quedó registrada ni que el repartidor recibió nada.
-- Si el cliente ya dio todo y pide confirmar, no digas “no tengo permisos” ni lo hagas consultar con el encargado repetidamente. Di una sola vez, en tono natural: “Ya tengo tu pedido armado; estoy validando el registro para confirmártelo.” No afirmes después que quedó confirmado hasta tener una respuesta real del sistema. Si existe una acción de atención humana habilitada en el flujo, úsala para ese caso; no asegures que alguien fue avisado si la acción no confirma éxito.
-- Cuando se conecte una acción de pedido/repartidor, el mensaje de aviso debe incluir el teléfono del cliente, la ubicación GPS original, el resumen y el total. Solo confirma el registro o aviso después de respuesta exitosa de esa acción.
+# REGISTRO REAL DE PEDIDOS
+- Dispones de la herramienta webhook registrar_pedido para registrar pedidos directamente en el CRM de Mr. Burger Empalme.
+- No inventes folios, números de orden, confirmaciones falsas ni afirmes que un pedido está registrado antes de que la herramienta registrar_pedido devuelva éxito (ok: true) y un folio real (ej. #MB-XXXXXX).
+- Cuándo invocar registrar_pedido:
+  - Invoca la herramienta únicamente cuando el cliente haya definido sus artículos (con cantidades y opciones requeridas), la modalidad de entrega (recoger o domicilio) y la forma de pago (efectivo o transferencia).
+  - Para domicilio (delivery), es indispensable contar con la ubicación GPS o dirección antes de registrar. Si falta la ubicación, pídela primero con naturalidad.
+  - Para recoger (pickup), no pidas ubicación ni dirección.
+- En la llamada a registrar_pedido:
+  - customer_phone = context.phone_number exacto.
+  - conversation_id = context.conversation_id exacto.
+  - fulfillment = "pickup" o "delivery".
+  - payment_method = "cash" o "transfer".
+  - items = arreglo con los productos solicitados ({ product, quantity, modifiers }).
+  - location = objeto con latitude y longitude (o dirección en Empalme) si es a domicilio.
+  - notes = notas o referencias adicionales si el cliente las dio.
+- Al recibir confirmación exitosa (ok: true):
+  - Confirma al cliente con un mensaje natural, breve y claro (1-2 frases).
+  - Incluye obligatoriamente el folio oficial devuelto (ej. #MB-XXXXXX), el total devuelto por el servidor y el tiempo estimado devuelto (ej. "¡Listo! Tu pedido quedó registrado con el folio #MB-123456 por $240. Estará listo en aprox. 8 a 15 minutos 🍔").
+  - Si es para entrega a domicilio, NUNCA digas "con envío", "incluye envío" ni desgloses el costo del reparto; solo menciona el total devuelto por el servidor.
+  - NUNCA afirmes que el repartidor ya tiene la ubicación o que fue avisado, pues el despacho a repartidores se gestiona internamente en el CRM.
+  - Si el pago es por transferencia, recuerda amablemente que el comprobante de transferencia será verificado por el equipo del negocio (nunca afirmes que ya quedó pagado hasta que sea validado).
+- Si la herramienta devuelve error o falla técnica:
+  - NUNCA afirmes que el pedido se registró ni inventes un folio.
+  - Usa inmediatamente la herramienta handoff_to_human para que el equipo humano atienda al cliente y dile amablemente: "Tuve un detalle al registrar tu pedido en el sistema; un compañero del equipo te atenderá enseguida para confirmarlo."
 
 # PAGOS
 - Se manejan efectivo y transferencia.
@@ -196,6 +214,113 @@ Sé amable, simple y útil. Responde lo que el cliente pidió, pregunta como má
         "jmespath_query": null,
         "name": "enviar_menu_imagen",
         "url": "https://solidbit-crm-demo.solidbit-whatsapp-agent.workers.dev/api/menu/send-image"
+    },
+    {
+            "ai_field_config": {},
+            "body": {},
+            "body_schema": {
+                    "type": "object",
+                    "required": [
+                            "items",
+                            "fulfillment",
+                            "payment_method",
+                            "customer_phone",
+                            "conversation_id"
+                    ],
+                    "properties": {
+                            "items": {
+                                    "type": "array",
+                                    "description": "Lista de artículos del pedido. Cada elemento requiere 'product' (nombre canónico) y 'quantity' (entero >= 1), con 'modifiers' opcional.",
+                                    "items": {
+                                            "type": "object",
+                                            "required": [
+                                                    "product",
+                                                    "quantity"
+                                            ],
+                                            "properties": {
+                                                    "product": {
+                                                            "type": "string",
+                                                            "description": "Nombre del producto en el menú (ej. Clásica, Tocino, Favorita, Boneless, Limonada de mango, etc.)"
+                                                    },
+                                                    "quantity": {
+                                                            "type": "integer",
+                                                            "description": "Cantidad de unidades del producto."
+                                                    },
+                                                    "modifiers": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                    "type": "string"
+                                                            },
+                                                            "description": "Extras o cambios aplicados (ej. Tocino, Queso menonita, P. Sazonadas, Mr. Papas, Ranch, etc.)"
+                                                    },
+                                                    "notes": {
+                                                            "type": "string",
+                                                            "description": "Instrucción de cocina específica para este artículo (ej. sin cebolla, salsa aparte)."
+                                                    }
+                                            }
+                                    }
+                            },
+                            "fulfillment": {
+                                    "type": "string",
+                                    "enum": [
+                                            "pickup",
+                                            "delivery"
+                                    ],
+                                    "description": "Modalidad de entrega: 'pickup' para recoger o 'delivery' a domicilio."
+                            },
+                            "payment_method": {
+                                    "type": "string",
+                                    "enum": [
+                                            "cash",
+                                            "transfer"
+                                    ],
+                                    "description": "Método de pago: 'cash' para efectivo o 'transfer' para transferencia bancaria."
+                            },
+                            "customer_phone": {
+                                    "type": "string",
+                                    "description": "Número de teléfono WhatsApp del cliente, copiado exactamente de context.phone_number."
+                            },
+                            "conversation_id": {
+                                    "type": "string",
+                                    "description": "ID de la conversación en Kapso, copiado exactamente de context.conversation_id."
+                            },
+                            "location": {
+                                    "description": "Ubicación de entrega (obligatoria si fulfillment es delivery). Puede ser coordenadas GPS o dirección en Empalme.",
+                                    "type": "object",
+                                    "properties": {
+                                            "latitude": {
+                                                    "type": "number",
+                                                    "description": "Latitud GPS"
+                                            },
+                                            "longitude": {
+                                                    "type": "number",
+                                                    "description": "Longitud GPS"
+                                            },
+                                            "address": {
+                                                    "type": "string",
+                                                    "description": "Dirección o referencia"
+                                            }
+                                    }
+                            },
+                            "notes": {
+                                    "type": "string",
+                                    "description": "Referencias o indicaciones de entrega."
+                            },
+                            "idempotency_key": {
+                                    "type": "string",
+                                    "description": "Clave única para evitar duplicar el pedido en reintentos."
+                            }
+                    }
+            },
+            "description": "Registra un pedido confirmado en el CRM de Mr. Burger Empalme. Llama esta herramienta una vez que el cliente definió productos, modalidad y pago (y ubicación si es delivery). Devuelve folio (#MB-XXXXXX), total y tiempo estimado.",
+            "headers": {
+                    "Content-Type": "application/json",
+                    "X-Order-Tool-Secret": "${ENV:KAPSO_ORDER_TOOL_SECRET}"
+            },
+            "http_method": "POST",
+            "jmespath_query": null,
+            "name": "registrar_pedido",
+            "url": "https://solidbit-crm-demo.solidbit-whatsapp-agent.workers.dev/api/kapso/orders"
     }
 ],
     "flow_agent_knowledge_bases": [],

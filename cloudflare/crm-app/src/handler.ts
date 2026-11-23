@@ -32,6 +32,7 @@ import {
   rejectOrderPayment,
   getSignedReceiptUrl,
   validateOrderStatusTransition,
+  createKapsoOrder,
   ingestPaymentReceipt,
   getHandoffConversation,
   decodeBase64Receipt,
@@ -41,6 +42,7 @@ import {
   sanitizeStoragePath
 } from "./supabase.ts";
 import { resolveInboxEmbed, isValidConversationId, type KapsoEmbedConfig } from "./embed.ts";
+import { validateAndPriceOrder } from "./menu-catalog.ts";
 
 function jsonResponse(
   status: number,
@@ -162,6 +164,8 @@ export async function handleRequest(
   const isMutating = ["POST", "PATCH", "PUT", "DELETE"].includes(method);
   const hasS2SAuth = Boolean(
     request.headers.get("x-api-key") ||
+    request.headers.get("x-order-tool-secret") ||
+    request.headers.get("x-menu-tool-secret") ||
     request.headers.get("authorization")?.startsWith("Bearer ")
   );
   if (isMutating && !hasS2SAuth) {
@@ -414,6 +418,254 @@ export async function handleRequest(
       ok: true,
       sent,
       message_ids: messageIds
+    });
+  }
+
+  // --- KAPSO ORDER REGISTRATION ENDPOINT (Server-to-Server WhatsApp Integration) ---
+  if (method === "POST" && (url.pathname === "/api/kapso/orders" || url.pathname === "/api/orders")) {
+    // 1. Request size limit (max 50KB)
+    const rawLen = request.headers.get("content-length");
+    if (rawLen && Number(rawLen) > 51200) {
+      return jsonResponse(413, {
+        ok: false,
+        error: "Cuerpo de solicitud demasiado grande (máximo 50KB)",
+        code: "PAYLOAD_TOO_LARGE"
+      });
+    }
+
+    // 2. Authenticate (Dedicated tool secret: KAPSO_ORDER_TOOL_SECRET, never KAPSO_API_KEY)
+    const toolSecretHeader = request.headers.get("x-order-tool-secret") || "";
+    const authHeader = request.headers.get("authorization") || request.headers.get("x-api-key") || "";
+    const token = toolSecretHeader.trim() || authHeader.replace(/^Bearer\s+/i, "").trim();
+
+    // Explicitly disallow KAPSO_API_KEY as incoming authentication secret
+    if (env.KAPSO_API_KEY && token === env.KAPSO_API_KEY) {
+      return jsonResponse(401, {
+        ok: false,
+        error: "KAPSO_API_KEY no está permitida como secreto de autenticación entrante. Configure y use KAPSO_ORDER_TOOL_SECRET.",
+        code: "INVALID_AUTH_KEY"
+      });
+    }
+
+    const expectedToolSecret = env.KAPSO_ORDER_TOOL_SECRET;
+    const isToolAuthed = Boolean(
+      (expectedToolSecret && token === expectedToolSecret) ||
+      (!expectedToolSecret && env.SESSION_SECRET && token === env.SESSION_SECRET)
+    );
+
+    let authenticatedUser: AuthenticatedUser | null = null;
+    if (!isToolAuthed) {
+      authenticatedUser = await authenticate(request, env, fetchFn);
+      if (!authenticatedUser) {
+        return jsonResponse(401, {
+          ok: false,
+          error: "Autenticación requerida para registrar pedidos (KAPSO_ORDER_TOOL_SECRET)",
+          code: "UNAUTHORIZED"
+        });
+      }
+    }
+
+    // 3. Strict business scope (Mr. Burger Empalme pinned by server config)
+    const sbConfig = getSupabaseConfig(env);
+
+    // 4. Parse and validate JSON payload
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse(400, {
+        ok: false,
+        error: "JSON inválido en el cuerpo de la solicitud",
+        code: "INVALID_JSON"
+      });
+    }
+
+    if (!body || typeof body !== "object") {
+      return jsonResponse(400, {
+        ok: false,
+        error: "Se requiere un objeto JSON válido con los datos del pedido",
+        code: "INVALID_BODY"
+      });
+    }
+
+    // 5. Fulfillment validation and normalization
+    const rawFulfillment = String(body.fulfillment || "").trim().toLowerCase();
+    let fulfillment: "pickup" | "delivery";
+    if (["pickup", "recoger", "para recoger", "en sucursal", "sucursal"].includes(rawFulfillment)) {
+      fulfillment = "pickup";
+    } else if (["delivery", "domicilio", "a domicilio", "envio", "entrega"].includes(rawFulfillment)) {
+      fulfillment = "delivery";
+    } else {
+      return jsonResponse(400, {
+        ok: false,
+        error: "Modalidad de entrega inválida. Debe ser 'pickup' (para recoger) o 'delivery' (a domicilio).",
+        code: "INVALID_FULFILLMENT"
+      });
+    }
+
+    // 6. Customer phone validation
+    const rawPhone = String(body.customer_phone || body.phone || body.phone_number || "").trim();
+    const cleanPhone = rawPhone.replace(/[^\d+]/g, "");
+    if (!cleanPhone || cleanPhone.replace(/\D/g, "").length < 7) {
+      return jsonResponse(400, {
+        ok: false,
+        error: "Se requiere el número de teléfono válido del cliente (customer_phone).",
+        code: "MISSING_CUSTOMER_PHONE"
+      });
+    }
+
+    // 7. Location validation (Mandatory for delivery)
+    let finalAddress: string | null = null;
+    if (fulfillment === "delivery") {
+      const rawLoc = body.location || body.address;
+      if (!rawLoc) {
+        return jsonResponse(400, {
+          ok: false,
+          error: "Se requiere ubicación GPS o dirección para pedidos a domicilio.",
+          code: "MISSING_DELIVERY_LOCATION"
+        });
+      }
+
+      if (typeof rawLoc === "object") {
+        const lat = rawLoc.latitude ?? rawLoc.lat;
+        const lng = rawLoc.longitude ?? rawLoc.lng ?? rawLoc.lon;
+        const addr = rawLoc.address ?? rawLoc.name ?? "";
+        if (lat !== undefined && lng !== undefined) {
+          finalAddress = `GPS: ${lat}, ${lng}${addr ? ` (${addr})` : ""}`;
+        } else if (addr) {
+          finalAddress = String(addr).trim();
+        } else {
+          return jsonResponse(400, {
+            ok: false,
+            error: "Ubicación GPS inválida. Proporcione coordenadas (latitude, longitude) o dirección.",
+            code: "INVALID_LOCATION_COORDINATES"
+          });
+        }
+      } else {
+        const strLoc = String(rawLoc).trim();
+        if (!strLoc) {
+          return jsonResponse(400, {
+            ok: false,
+            error: "Se requiere ubicación GPS o dirección no vacía para pedidos a domicilio.",
+            code: "MISSING_DELIVERY_LOCATION"
+          });
+        }
+        finalAddress = strLoc;
+      }
+    }
+
+    // 8. Payment method normalization
+    const rawPayment = String(body.payment_method || body.payment || "cash").trim().toLowerCase();
+    const paymentMethod: "cash" | "transfer" =
+      ["transfer", "transferencia", "spei", "banco"].includes(rawPayment) ? "transfer" : "cash";
+
+    // 9. Items catalog validation and price calculation
+    const rawItems = body.items;
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return jsonResponse(400, {
+        ok: false,
+        error: "El pedido debe contener al menos un producto (items).",
+        code: "EMPTY_ITEMS"
+      });
+    }
+
+    // Fetch dynamic products and modifiers from Supabase if available
+    const [dbProducts, dbModifiers] = await Promise.all([
+      supabaseRequest<any[]>(
+        "/rest/v1/menu_products",
+        {
+          privileged: true,
+          query: {
+            select: "sku,category,name,price_cents,description,active",
+            limit: "500"
+          }
+        },
+        sbConfig,
+        fetchFn
+      ).catch(() => []),
+      supabaseRequest<any[]>(
+        "/rest/v1/menu_modifiers",
+        {
+          privileged: true,
+          query: {
+            select: "sku,name,price_cents,category,requires_review",
+            limit: "500"
+          }
+        },
+        sbConfig,
+        fetchFn
+      ).catch(() => [])
+    ]);
+
+    let priced;
+    try {
+      priced = validateAndPriceOrder(rawItems, fulfillment, dbProducts, dbModifiers);
+    } catch (valErr: any) {
+      return jsonResponse(422, {
+        ok: false,
+        error: valErr.message || "Error al validar los productos del menú",
+        code: "CATALOG_VALIDATION_ERROR"
+      });
+    }
+
+    // 10. Idempotency Key construction
+    const rawKey = String(body.idempotency_key || body.confirmation_key || "").trim();
+    const conversationId = String(body.conversation_id || "").trim() || null;
+    const digitsPhone = cleanPhone.replace(/\D/g, "");
+    const itemsDigest = priced.items.map(i => `${i.sku}x${i.quantity}`).join("_");
+    const confirmationKey = rawKey || `ord_${digitsPhone || conversationId || "anon"}_${itemsDigest}_${fulfillment}`;
+
+    // 11. Create Order in CRM / Supabase
+    let created;
+    try {
+      created = await createKapsoOrder(
+        {
+          confirmationKey,
+          providerMessageId: body.provider_message_id || body.wamid || null,
+          conversationId,
+          customerPhone: cleanPhone,
+          items: priced.items,
+          subtotalCents: priced.subtotal_cents,
+          shippingCents: priced.shipping_cents,
+          totalCents: priced.total_cents,
+          fulfillment,
+          address: finalAddress,
+          deliveryReferences: body.notes || body.delivery_references || null,
+          paymentMethod,
+          paymentStatus: "pending",
+          orderStatus: "received"
+        },
+        sbConfig,
+        fetchFn
+      );
+    } catch (dbErr: any) {
+      const status = dbErr.status || 502;
+      return jsonResponse(status, {
+        error: `Error interno del CRM al registrar el pedido: ${dbErr.message || "fallo de base de datos"}`,
+        code: dbErr.code || "DATABASE_ERROR"
+      });
+    }
+    const { order, duplicate } = created;
+
+    // 12. Determine estimated time
+    const totalItemsCount = priced.items.reduce((sum, it) => sum + it.quantity, 0);
+    const estimatedTime = fulfillment === "pickup"
+      ? (totalItemsCount >= 15 ? "25 a 30 minutos" : "8 a 15 minutos")
+      : (totalItemsCount >= 15 ? "35 a 45 minutos" : "25 minutos");
+
+    return jsonResponse(200, {
+      ok: true,
+      duplicate,
+      folio: order?.folio ? (order.folio.startsWith("#") ? order.folio : `#${order.folio}`) : `#MB-${String(order?.id || "000000").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`,
+      order_id: order.id,
+      order_status: order.order_status,
+      payment_status: paymentMethod === "transfer" ? "pending_verification" : "pending",
+      subtotal_cents: order.subtotal_cents || priced.subtotal_cents,
+      shipping_cents: order.shipping_cents ?? priced.shipping_cents,
+      total_cents: order.total_cents || priced.total_cents,
+      total_formatted: "$" + Math.round((order.total_cents || priced.total_cents) / 100),
+      fulfillment,
+      estimated_time: estimatedTime
     });
   }
 

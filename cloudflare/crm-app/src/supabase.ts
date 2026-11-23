@@ -1403,3 +1403,164 @@ export async function ingestPaymentReceipt(
 
   return { receipt, duplicate: false, associationState: receiptStatus };
 }
+
+
+export interface CreateKapsoOrderParams {
+  confirmationKey: string;
+  providerMessageId?: string | null;
+  conversationId?: string | null;
+  customerPhone: string;
+  items: any[];
+  subtotalCents: number;
+  shippingCents: number;
+  totalCents: number;
+  fulfillment: "pickup" | "delivery";
+  address?: string | null;
+  deliveryReferences?: string | null;
+  paymentMethod: "cash" | "transfer";
+  paymentStatus: "pending";
+  orderStatus: "received";
+}
+
+export async function createKapsoOrder(
+  params: CreateKapsoOrderParams,
+  config: SupabaseConfig,
+  fetchFn: typeof fetch = fetch
+): Promise<{ order: any; duplicate: boolean }> {
+  // 1. Check exact confirmation_key idempotency
+  if (params.confirmationKey) {
+    const existingByKey = await supabaseRequest<any[]>(
+      "/rest/v1/orders",
+      {
+        privileged: true,
+        query: {
+          select: "*",
+          business_id: "eq." + config.businessId,
+          confirmation_key: "eq." + params.confirmationKey,
+          limit: "1"
+        }
+      },
+      config,
+      fetchFn
+    ).catch(() => []);
+
+    if (existingByKey && existingByKey.length > 0) {
+      return { order: existingByKey[0], duplicate: true };
+    }
+  }
+
+  // 2. Check duplicate message burst (same customer/conversation, same total, same fulfillment in last 90 seconds)
+  const recentOrders = await supabaseRequest<any[]>(
+    "/rest/v1/orders",
+    {
+      privileged: true,
+      query: {
+        select: "*",
+        business_id: "eq." + config.businessId,
+        customer_ref: "eq." + params.customerPhone,
+        fulfillment: "eq." + params.fulfillment,
+        total_cents: "eq." + params.totalCents,
+        order: "created_at.desc",
+        limit: "5"
+      }
+    },
+    config,
+    fetchFn
+  ).catch(() => []);
+
+  if (recentOrders && recentOrders.length > 0) {
+    const latest = recentOrders[0];
+    const diffMs = Date.now() - new Date(latest.created_at).getTime();
+    if (diffMs >= 0 && diffMs < 90000 && latest.order_status === "received") {
+      return { order: latest, duplicate: true };
+    }
+  }
+
+  const orderId = crypto.randomUUID();
+  const rawHex = orderId.replace(/-/g, "").slice(0, 6).toUpperCase();
+  const folio = "MB-" + rawHex;
+
+  const inserted = await supabaseRequest<any[]>(
+    "/rest/v1/orders",
+    {
+      method: "POST",
+      privileged: true,
+      prefer: "return=representation",
+      body: {
+        id: orderId,
+        business_id: config.businessId,
+        confirmation_key: params.confirmationKey,
+        provider_message_id: params.providerMessageId || null,
+        conversation_id: params.conversationId || null,
+        customer_ref: params.customerPhone,
+        items: params.items,
+        subtotal_cents: params.subtotalCents,
+        shipping_cents: params.shippingCents,
+        total_cents: params.totalCents,
+        fulfillment: params.fulfillment,
+        address: params.address || null,
+        delivery_references: params.deliveryReferences || null,
+        payment_method: params.paymentMethod,
+        payment_status: params.paymentStatus,
+        order_status: params.orderStatus,
+        folio: folio
+      }
+    },
+    config,
+    fetchFn
+  );
+
+  const newOrder = (inserted && inserted[0]) ? inserted[0] : {
+    id: orderId,
+    folio,
+    business_id: config.businessId,
+    total_cents: params.totalCents,
+    order_status: params.orderStatus,
+    payment_status: params.paymentStatus,
+    fulfillment: params.fulfillment
+  };
+
+  // 3. Emit CRM Notification
+  await createNotification(
+    {
+      businessId: config.businessId,
+      eventKey: (params.paymentMethod === "transfer" ? "order_transfer_pending:" : "order_confirmed:") + orderId,
+      type: params.paymentMethod === "transfer" ? "transfer_validation" : "order_confirmed",
+      priority: params.paymentMethod === "transfer" ? "high" : "normal",
+      title: params.paymentMethod === "transfer"
+        ? "Pedido por transferencia pendiente (#" + folio + ")"
+        : "Nuevo pedido recibido (#" + folio + ")",
+      message: params.paymentMethod === "transfer"
+        ? "Pedido #" + folio + " ($" + Math.round(params.totalCents / 100) + ") pendiente de comprobante y validación."
+        : "Pedido #" + folio + " (" + (params.fulfillment === "delivery" ? "Domicilio" : "Recoger") + ") recibido por $" + Math.round(params.totalCents / 100) + ".",
+      resourceType: "order",
+      resourceId: orderId,
+      recipientRole: "all",
+      metadata: {
+        order_id: orderId,
+        folio: "#" + folio,
+        total_cents: params.totalCents,
+        fulfillment: params.fulfillment,
+        payment_method: params.paymentMethod,
+        payment_status: params.paymentStatus
+      }
+    },
+    config,
+    fetchFn
+  ).catch(() => null);
+
+  // 4. Record order history
+  await addOrderHistory(
+    {
+      orderId: orderId,
+      action: "created",
+      newStatus: "received",
+      notes: "Pedido registrado vía WhatsApp/Kapso (" + (params.fulfillment === "delivery" ? "Domicilio" : "Para recoger") + ", pago: " + params.paymentMethod + ")",
+      actorRole: "system"
+    },
+    config,
+    fetchFn
+  ).catch(() => null);
+
+  return { order: newOrder, duplicate: false };
+}

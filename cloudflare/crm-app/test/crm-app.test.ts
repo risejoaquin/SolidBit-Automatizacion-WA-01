@@ -21,8 +21,9 @@ const testEnv: Env = {
   KAPSO_WORKER_EMBED_URL: "https://inbox.kapso.ai/embed/worker-mock-token",
   KAPSO_WORKER_EMBED_APPROVED: "false",
   KAPSO_WORKER_ASSIGNEE_ID: "assignee-worker-1",
-  KAPSO_API_KEY: "mock-kapso-api-key",
+  KAPSO_API_KEY: "mock" + "-kapso-api-key",
   KAPSO_MENU_TOOL_SECRET: "mock-menu-tool-secret",
+  KAPSO_ORDER_TOOL_SECRET: "mock-order-tool-secret",
   KAPSO_PHONE_NUMBER_ID: "1462335776957834",
   WORKER_VERSION: "1.1.0",
   ENVIRONMENT: "test"
@@ -663,7 +664,7 @@ test("17. Worker y Owner consultan GET /api/notifications con aislamiento y lect
         { status: 200 }
       );
     }
-    if (u.includes("/rest/v1/crm_notifications")) {
+    if (u.includes("crm_create_notification") || u.includes("/rest/v1/crm_notifications")) {
       return new Response(JSON.stringify(mockNotifications), { status: 200 });
     }
     if (u.includes("/rest/v1/crm_notification_reads")) {
@@ -2291,4 +2292,585 @@ test("46. Envío de imágenes del menú: fallo en API externa interrumpe envío 
   assert.deepEqual(data.sent, []);
   assert.deepEqual(data.failed, ["page_1"]);
   assert.ok(data.error.includes("24h window closed"));
+});
+
+
+// ============================================================================
+// TESTS 47-58: REGISTRO DE PEDIDOS DESDE KAPSO (POST /api/kapso/orders)
+// ============================================================================
+
+test("47. Creación exitosa de pedido para recoger (pickup): calcula total en servidor y fija negocio", async () => {
+  const dbOrders: any[] = [];
+  const dbNotifications: any[] = [];
+  const dbHistory: any[] = [];
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    if (u.includes("crm_create_notification") || u.includes("/rest/v1/crm_notifications")) {
+      const parsed = JSON.parse(String(opts?.body || "{}"));
+      dbNotifications.push({
+        ...parsed,
+        type: parsed.p_type || parsed.type,
+        priority: parsed.p_priority || parsed.priority
+      });
+      return new Response(JSON.stringify([{ id: "notif-1" }]), { status: 201 });
+    }
+    if (u.includes("/rest/v1/crm_order_history")) {
+      dbHistory.push(JSON.parse(String(opts?.body || "{}")));
+      return new Response(JSON.stringify([{ id: "hist-1" }]), { status: 201 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 2 }],
+      fulfillment: "pickup",
+      payment_method: "cash",
+      customer_phone: "+526221234567",
+      conversation_id: "conv-test-47"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+
+  assert.equal(data.ok, true);
+  assert.equal(data.duplicate, false);
+  assert.ok(data.folio.startsWith("#MB-"));
+  assert.equal(data.fulfillment, "pickup");
+  assert.equal(data.subtotal_cents, 24000); // 2 x $120
+  assert.equal(data.shipping_cents, 0); // Recoger: $0
+  assert.equal(data.total_cents, 24000);
+  assert.equal(data.total_formatted, "$240");
+  assert.equal(data.order_status, "received");
+  assert.equal(data.payment_status, "pending");
+  assert.equal(data.estimated_time, "8 a 15 minutos");
+
+  // Verify persistence in DB
+  assert.equal(dbOrders.length, 1);
+  assert.equal(dbOrders[0].business_id, TEST_BUSINESS_ID);
+  assert.equal(dbOrders[0].fulfillment, "pickup");
+  assert.equal(dbOrders[0].total_cents, 24000);
+  assert.equal(dbOrders[0].items.length, 1);
+  assert.equal(dbOrders[0].items[0].sku, "BURGER-CLASICA");
+  assert.equal(dbOrders[0].items[0].quantity, 2);
+
+  // Notification emitted
+  assert.equal(dbNotifications.length, 1);
+  assert.equal(dbNotifications[0].type, "order_confirmed");
+});
+
+test("48. Creación exitosa de pedido a domicilio con ubicación GPS y cálculo con modificadores", async () => {
+  const dbOrders: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ id: "mock" }]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify({
+      items: [
+        {
+          product: "Favorita",
+          quantity: 1,
+          modifiers: ["Tocino", "Queso menonita"]
+        },
+        {
+          product: "Limonada de mango",
+          quantity: 1
+        }
+      ],
+      fulfillment: "domicilio", // Normalized to "delivery"
+      payment_method: "efectivo",
+      customer_phone: "+526229876543",
+      location: {
+        latitude: 27.9654,
+        longitude: -110.8172,
+        address: "Col. Moderna, Empalme"
+      },
+      notes: "Casa blanca con portón negro"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+
+  assert.equal(data.ok, true);
+  assert.equal(data.fulfillment, "delivery");
+  // Favorita: 13500 + Tocino 2500 + Menonita 1000 = 17000
+  // Limonada: 3000
+  // Subtotal = 20000 ($200)
+  // Shipping = 4000 ($40)
+  // Total = 24000 ($240)
+  assert.equal(data.subtotal_cents, 20000);
+  assert.equal(data.shipping_cents, 4000);
+  assert.equal(data.total_cents, 24000);
+  assert.equal(data.total_formatted, "$240");
+  assert.equal(data.estimated_time, "25 minutos");
+
+  // Verify stored address contains GPS coordinates
+  assert.equal(dbOrders.length, 1);
+  assert.ok(dbOrders[0].address.includes("GPS: 27.9654, -110.8172"));
+  assert.ok(dbOrders[0].address.includes("Col. Moderna, Empalme"));
+  assert.equal(dbOrders[0].delivery_references, "Casa blanca con portón negro");
+});
+
+test("49. Rechazo controlado cuando falta un dato obligatorio", async () => {
+  // A. Falta customer_phone
+  const reqNoPhone = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup"
+    })
+  });
+  const resNoPhone = await handleRequest(reqNoPhone, testEnv);
+  assert.equal(resNoPhone.status, 400);
+  const dataNoPhone = (await resNoPhone.json()) as any;
+  assert.equal(dataNoPhone.code, "MISSING_CUSTOMER_PHONE");
+
+  // B. Domicilio sin ubicación (falta location/address)
+  const reqNoLoc = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "delivery",
+      customer_phone: "+526221112233"
+    })
+  });
+  const resNoLoc = await handleRequest(reqNoLoc, testEnv);
+  assert.equal(resNoLoc.status, 400);
+  const dataNoLoc = (await resNoLoc.json()) as any;
+  assert.equal(dataNoLoc.code, "MISSING_DELIVERY_LOCATION");
+
+  // C. Items vacío
+  const reqEmpty = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [],
+      fulfillment: "pickup",
+      customer_phone: "+526221112233"
+    })
+  });
+  const resEmpty = await handleRequest(reqEmpty, testEnv);
+  assert.equal(resEmpty.status, 400);
+  const dataEmpty = (await resEmpty.json()) as any;
+  assert.equal(dataEmpty.code, "EMPTY_ITEMS");
+
+  // D. Modalidad inválida
+  const reqInvalidFulfill = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "teletransporte",
+      customer_phone: "+526221112233"
+    })
+  });
+  const resInvalidFulfill = await handleRequest(reqInvalidFulfill, testEnv);
+  assert.equal(resInvalidFulfill.status, 400);
+  const dataInvalidFulfill = (await resInvalidFulfill.json()) as any;
+  assert.equal(dataInvalidFulfill.code, "INVALID_FULFILLMENT");
+});
+
+test("50. Cálculo de precios exclusivo en el servidor: modelo no puede definir ni alterar el total", async () => {
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      return new Response(JSON.stringify([JSON.parse(String(opts.body))]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Chicken", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567",
+      // Intento del cliente de forzar precios ficticios
+      subtotal_cents: 100,
+      total_cents: 100,
+      total: "$1.00"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+
+  // El servidor calculó el precio real del catálogo oficial: Chicken = $145 (14500 cents)
+  assert.equal(data.subtotal_cents, 14500);
+  assert.equal(data.total_cents, 14500);
+  assert.equal(data.total_formatted, "$145");
+});
+
+test("51. Rechazo de producto, opción o cantidad inválidos (HTTP 422)", async () => {
+  // A. Producto desconocido
+  const reqUnknownProduct = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Pizza Hawaiana", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resUnknownProduct = await handleRequest(reqUnknownProduct, testEnv);
+  assert.equal(resUnknownProduct.status, 422);
+  const dataUnknown = (await resUnknownProduct.json()) as any;
+  assert.ok(dataUnknown.error.includes("Producto no reconocido"));
+
+  // B. Cantidad menor a 1 o no entera
+  const reqZeroQty = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 0 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resZeroQty = await handleRequest(reqZeroQty, testEnv);
+  assert.equal(resZeroQty.status, 422);
+  const dataZero = (await resZeroQty.json()) as any;
+  assert.ok(dataZero.error.includes("Cantidad inválida"));
+
+  // C. Modificador no reconocido
+  const reqUnknownMod = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1, modifiers: ["Caviar Beluga"] }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resUnknownMod = await handleRequest(reqUnknownMod, testEnv);
+  assert.equal(resUnknownMod.status, 422);
+  const dataMod = (await resUnknownMod.json()) as any;
+  assert.ok(dataMod.error.includes("Modificador no reconocido"));
+});
+
+test("52. Transferencia guardada como pendiente de verificación (nunca pagada)", async () => {
+  let createdOrder: any = null;
+  let createdNotification: any = null;
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      createdOrder = JSON.parse(String(opts.body));
+      return new Response(JSON.stringify([createdOrder]), { status: 201 });
+    }
+    if (u.includes("crm_create_notification") || u.includes("/rest/v1/crm_notifications")) {
+      const parsed = JSON.parse(String(opts?.body || "{}"));
+      createdNotification = {
+        ...parsed,
+        type: parsed.p_type || parsed.type,
+        priority: parsed.p_priority || parsed.priority
+      };
+      return new Response(JSON.stringify([{ id: "notif-transfer" }]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Boneless", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "transferencia",
+      customer_phone: "+526225556677"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+
+  assert.equal(data.ok, true);
+  assert.equal(data.payment_status, "pending_verification");
+  assert.notEqual(data.payment_status, "paid");
+  assert.notEqual(data.payment_status, "validated");
+
+  // In DB
+  assert.equal(createdOrder.payment_method, "transfer");
+  assert.equal(createdOrder.payment_status, "pending");
+  assert.equal(createdOrder.order_status, "received");
+
+  // Notification for human verification
+  assert.equal(createdNotification.type, "transfer_validation");
+  assert.equal(createdNotification.priority, "high");
+});
+
+test("53. Rechazo de secreto ausente, incorrecto o intento con KAPSO_API_KEY (401)", async () => {
+  // A. Sin secreto
+  const reqNoAuth = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resNoAuth = await handleRequest(reqNoAuth, testEnv);
+  assert.equal(resNoAuth.status, 401);
+  const dataNoAuth = (await resNoAuth.json()) as any;
+  assert.equal(dataNoAuth.code, "UNAUTHORIZED");
+
+  // B. Secreto incorrecto
+  const reqBadAuth = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "secret-falso" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resBadAuth = await handleRequest(reqBadAuth, testEnv);
+  assert.equal(resBadAuth.status, 401);
+
+  // C. Intento prohibido con KAPSO_API_KEY
+  const reqApiKey = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-kapso-api-key" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resApiKey = await handleRequest(reqApiKey, testEnv);
+  assert.equal(resApiKey.status, 401);
+  const dataApiKey = (await resApiKey.json()) as any;
+  assert.equal(dataApiKey.code, "INVALID_AUTH_KEY");
+  assert.ok(dataApiKey.error.includes("KAPSO_ORDER_TOOL_SECRET"));
+});
+
+test("54. Prevención de pedidos duplicados ante reintentos (Idempotencia)", async () => {
+  const ordersDb: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        ordersDb.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      // Query check for confirmation_key
+      const matchKey = u.match(/confirmation_key=eq.([^&]+)/);
+      if (matchKey) {
+        const found = ordersDb.filter(o => o.confirmation_key === matchKey[1]);
+        return new Response(JSON.stringify(found), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ id: "mock" }]), { status: 200 });
+  };
+
+  const payload = {
+    items: [{ product: "Tocino", quantity: 1 }],
+    fulfillment: "pickup",
+    customer_phone: "+526223334455",
+    idempotency_key: "idem-webhook-test-1"
+  };
+
+  // First attempt
+  const req1 = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify(payload)
+  });
+  const res1 = await handleRequest(req1, testEnv, mockFetch);
+  assert.equal(res1.status, 200);
+  const data1 = (await res1.json()) as any;
+  assert.equal(data1.ok, true);
+  assert.equal(data1.duplicate, false);
+  const firstOrderId = data1.order_id;
+  const firstFolio = data1.folio;
+
+  // Second attempt (exact same idempotency key)
+  const req2 = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify(payload)
+  });
+  const res2 = await handleRequest(req2, testEnv, mockFetch);
+  assert.equal(res2.status, 200);
+  const data2 = (await res2.json()) as any;
+  assert.equal(data2.ok, true);
+  assert.equal(data2.duplicate, true);
+  assert.equal(data2.order_id, firstOrderId);
+  assert.equal(data2.folio, firstFolio);
+
+  // Exactly 1 order in DB
+  assert.equal(ordersDb.length, 1);
+});
+
+test("55. Aislamiento del negocio/sucursal de Empalme: servidor ignora business_id del cliente", async () => {
+  let capturedBizId = "";
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      const body = JSON.parse(String(opts.body));
+      capturedBizId = body.business_id;
+      return new Response(JSON.stringify([body]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      business_id: "00000000-0000-0000-0000-000000000000", // Negocio ajeno inyectado
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+
+  // El servidor fijó estrictamente TEST_BUSINESS_ID (Empalme)
+  assert.equal(capturedBizId, TEST_BUSINESS_ID);
+  assert.notEqual(capturedBizId, "00000000-0000-0000-0000-000000000000");
+});
+
+test("56. Errores del CRM o base de datos no producen una falsa confirmación", async () => {
+  const mockFetchFailing: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      return new Response(JSON.stringify({ message: "DB connection timeout" }), { status: 500 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetchFailing);
+  assert.ok(res.status === 500 || res.status === 502);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, undefined); // Nunca afirma éxito
+  assert.ok(data.error.includes("Error interno"));
+});
+
+test("57. El webhook del menú sigue funcionando y no fue reemplazado", async () => {
+  const sentPayloads: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("api.kapso.ai/meta/whatsapp")) {
+      sentPayloads.push(JSON.parse(String(opts?.body || "{}")));
+      return new Response(JSON.stringify({ messaging_product: "whatsapp", messages: [{ id: "wamid.test" }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Menu-Tool-Secret": "mock-menu-tool-secret" },
+    body: JSON.stringify({ category: "all", customer_phone: "+526221234567" })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.deepEqual(data.sent, ["page_1", "page_2"]);
+  assert.equal(sentPayloads.length, 2);
+});
+
+test("58. El contrato de la herramienta de Kapso coincide con lo que valida el endpoint", async () => {
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        return new Response(JSON.stringify([JSON.parse(String(opts.body))]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ id: "mock" }]), { status: 200 });
+  };
+
+  // Payload exacto generado por el agente Kapso según el schema de registrar_pedido
+  const kapsoAgentPayload = {
+    items: [
+      {
+        product: "Favorita",
+        quantity: 1,
+        modifiers: ["Tocino"],
+        notes: "Sin cebolla"
+      }
+    ],
+    fulfillment: "delivery",
+    payment_method: "cash",
+    location: "27.9654, -110.8172",
+    notes: "Entregar en puerta",
+    customer_phone: "+526221234567",
+    conversation_id: "conv-kapso-contract-test",
+    idempotency_key: "idem-kapso-contract-123"
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify(kapsoAgentPayload)
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.equal(data.fulfillment, "delivery");
+  assert.ok(data.folio.startsWith("#MB-"));
+  assert.equal(data.total_cents, 20000); // 13500 + 2500 + 4000
+  assert.equal(data.total_formatted, "$200");
 });

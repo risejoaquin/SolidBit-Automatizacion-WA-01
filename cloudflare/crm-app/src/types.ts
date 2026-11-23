@@ -17,6 +17,7 @@ export interface Env {
   SESSION_SECRET?: string;
   KAPSO_API_KEY?: string;
   KAPSO_MENU_TOOL_SECRET?: string;
+  KAPSO_ORDER_TOOL_SECRET?: string;
   KAPSO_OWNER_EMBED_URL?: string;
   KAPSO_WORKER_EMBED_URL?: string;
 }
