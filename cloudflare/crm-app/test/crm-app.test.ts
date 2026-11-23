@@ -21,6 +21,9 @@ const testEnv: Env = {
   KAPSO_WORKER_EMBED_URL: "https://inbox.kapso.ai/embed/worker-mock-token",
   KAPSO_WORKER_EMBED_APPROVED: "false",
   KAPSO_WORKER_ASSIGNEE_ID: "assignee-worker-1",
+  KAPSO_API_KEY: "mock-kapso-api-key",
+  KAPSO_MENU_TOOL_SECRET: "mock-menu-tool-secret",
+  KAPSO_PHONE_NUMBER_ID: "1462335776957834",
   WORKER_VERSION: "1.1.0",
   ENVIRONMENT: "test"
 };
@@ -2120,4 +2123,172 @@ test("41. Aislamiento Worker en Inbox: GET /api/inbox-embed respeta aprobación 
   assert.equal(approvedData.status, "ready");
   assert.ok(approvedData.embed_url.includes("worker-mock-token"));
   assert.ok(!approvedData.embed_url.includes("owner-mock-token"));
+});
+
+test("42. Assets estáticos del menú: GET /menu/... sirve recurso o 404 controlado", async () => {
+  const reqImg1 = new Request("https://crm.local/menu/mr-burger-hamburguesas-boneless-complementos.png", { method: "GET" });
+  const resImg1 = await handleRequest(reqImg1, testEnv);
+  // If not bundled with binary data, returns 404; if bundled, returns 200 image/png
+  assert.ok([200, 404].includes(resImg1.status));
+  if (resImg1.status === 200) {
+    assert.equal(resImg1.headers.get("Content-Type"), "image/png");
+    assert.ok(resImg1.headers.get("Cache-Control")?.includes("public"));
+  }
+});
+
+test("43. Envío de imágenes del menú: POST /api/menu/send-image rechaza sin autenticación o con KAPSO_API_KEY (401)", async () => {
+  // Sin autenticación
+  const reqNoAuth = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category: "all", customer_phone: "+526623492970" })
+  });
+  const resNoAuth = await handleRequest(reqNoAuth, testEnv);
+  assert.equal(resNoAuth.status, 401);
+
+  // Intento de autenticación entrante con KAPSO_API_KEY (prohibido)
+  const reqApiKey = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Menu-Tool-Secret": "mock-kapso-api-key"
+    },
+    body: JSON.stringify({ category: "all", customer_phone: "+526623492970" })
+  });
+  const resApiKey = await handleRequest(reqApiKey, testEnv);
+  assert.equal(resApiKey.status, 401);
+  const dataApiKey = (await resApiKey.json()) as any;
+  assert.ok(dataApiKey.error.includes("KAPSO_MENU_TOOL_SECRET"));
+});
+
+test("44. Envío de imágenes del menú: categoría 'all' envía ambas páginas en orden y resuelve teléfono de conversación", async () => {
+  const sentPayloads: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_inbound_events")) {
+      return new Response(JSON.stringify([{ customer_phone: "+526621234567" }]), { status: 200 });
+    }
+    if (u.includes("api.kapso.ai/meta/whatsapp")) {
+      const parsedBody = JSON.parse(String(opts?.body || "{}"));
+      sentPayloads.push(parsedBody);
+      return new Response(JSON.stringify({
+        messaging_product: "whatsapp",
+        messages: [{ id: `wamid.mock_${sentPayloads.length}` }]
+      }), { status: 200 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  const req = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
+    },
+    body: JSON.stringify({
+      category: "all",
+      conversation_id: "conv-12345"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.deepEqual(data.sent, ["page_1", "page_2"]);
+  assert.equal(data.reply_text, undefined);
+  assert.equal(sentPayloads.length, 2);
+  assert.equal(sentPayloads[0].to, "526621234567");
+  assert.ok(sentPayloads[0].image.link.includes("mr-burger-hamburguesas-boneless-complementos.png"));
+  assert.equal(sentPayloads[0].image.caption, undefined);
+  assert.ok(sentPayloads[1].image.link.includes("mr-burger-bebidas-extras-postres.png"));
+  assert.equal(sentPayloads[1].image.caption, undefined);
+});
+
+test("45. Envío de imágenes del menú: categorías específicas envían solo la página solicitada", async () => {
+  const sentPayloads: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("api.kapso.ai/meta/whatsapp")) {
+      const parsedBody = JSON.parse(String(opts?.body || "{}"));
+      sentPayloads.push(parsedBody);
+      return new Response(JSON.stringify({
+        messaging_product: "whatsapp",
+        messages: [{ id: `wamid.mock_${sentPayloads.length}` }]
+      }), { status: 200 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  // Solicitar sólo hamburguesas
+  const reqBurger = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
+    },
+    body: JSON.stringify({
+      category: "hamburguesas",
+      customer_phone: "+526621112233"
+    })
+  });
+  const resBurger = await handleRequest(reqBurger, testEnv, mockFetch);
+  assert.equal(resBurger.status, 200);
+  const dataBurger = (await resBurger.json()) as any;
+  assert.equal(dataBurger.ok, true);
+  assert.deepEqual(dataBurger.sent, ["page_1"]);
+  assert.equal(sentPayloads.length, 1);
+  assert.ok(sentPayloads[0].image.link.includes("mr-burger-hamburguesas-boneless-complementos.png"));
+
+  // Solicitar sólo bebidas
+  const reqDrink = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
+    },
+    body: JSON.stringify({
+      category: "bebidas",
+      customer_phone: "+526621112233"
+    })
+  });
+  const resDrink = await handleRequest(reqDrink, testEnv, mockFetch);
+  assert.equal(resDrink.status, 200);
+  const dataDrink = (await resDrink.json()) as any;
+  assert.equal(dataDrink.ok, true);
+  assert.deepEqual(dataDrink.sent, ["page_2"]);
+  assert.equal(sentPayloads.length, 2);
+  assert.ok(sentPayloads[1].image.link.includes("mr-burger-bebidas-extras-postres.png"));
+});
+
+test("46. Envío de imágenes del menú: fallo en API externa interrumpe envío y reporta error con precisión", async () => {
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("api.kapso.ai/meta/whatsapp")) {
+      return new Response(JSON.stringify({
+        error: { message: "Re-engagement message: 24h window closed", code: 131047 }
+      }), { status: 400 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  const req = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
+    },
+    body: JSON.stringify({
+      category: "all",
+      customer_phone: "+526629998877"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 400);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.deepEqual(data.sent, []);
+  assert.deepEqual(data.failed, ["page_1"]);
+  assert.ok(data.error.includes("24h window closed"));
 });

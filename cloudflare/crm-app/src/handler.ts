@@ -158,9 +158,13 @@ export async function handleRequest(
   const url = new URL(request.url);
   const method = request.method;
 
-  // Security guard for state-mutating requests
+  // Security guard for state-mutating requests (bypass for server-to-server authenticated requests)
   const isMutating = ["POST", "PATCH", "PUT", "DELETE"].includes(method);
-  if (isMutating) {
+  const hasS2SAuth = Boolean(
+    request.headers.get("x-api-key") ||
+    request.headers.get("authorization")?.startsWith("Bearer ")
+  );
+  if (isMutating && !hasS2SAuth) {
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) {
       return jsonResponse(403, { error: "Origen no autorizado" });
@@ -186,9 +190,24 @@ export async function handleRequest(
     });
   }
 
-  // 2. Static Assets
+  // 2. Static Assets (including menu images)
   if (method === "GET" && staticAssets[url.pathname]) {
     const asset = staticAssets[url.pathname];
+    if (!asset.content) {
+      return jsonResponse(404, { error: "Recurso no disponible en este momento" });
+    }
+    if (asset.isBase64) {
+      const binary = Uint8Array.from(atob(asset.content), c => c.charCodeAt(0));
+      return new Response(binary, {
+        status: 200,
+        headers: {
+          "Content-Type": asset.contentType,
+          "Cache-Control": "public, max-age=86400",
+          "Access-Control-Allow-Origin": "*",
+          "X-Content-Type-Options": "nosniff"
+        }
+      });
+    }
     return new Response(asset.content, {
       status: 200,
       headers: {
@@ -200,6 +219,201 @@ export async function handleRequest(
         "Content-Security-Policy":
           "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' https://*.supabase.co data:; frame-src https://inbox.kapso.ai; base-uri 'none'; object-src 'none'"
       }
+    });
+  }
+
+  // --- MENU IMAGE DISPATCH ENDPOINT (Kapso WhatsApp Integration) ---
+  if (method === "POST" && url.pathname === "/api/menu/send-image") {
+    // 1. Authenticate (Dedicated tool secret: KAPSO_MENU_TOOL_SECRET, never KAPSO_API_KEY)
+    const toolSecretHeader = request.headers.get("x-menu-tool-secret") || "";
+    const authHeader = request.headers.get("authorization") || request.headers.get("x-api-key") || "";
+    const token = toolSecretHeader.trim() || authHeader.replace(/^Bearer\s+/i, "").trim();
+
+    // Explicitly disallow KAPSO_API_KEY as incoming authentication secret
+    if (env.KAPSO_API_KEY && token === env.KAPSO_API_KEY) {
+      return jsonResponse(401, {
+        error: "KAPSO_API_KEY no está permitida como secreto de autenticación entrante. Configure y use KAPSO_MENU_TOOL_SECRET."
+      });
+    }
+
+    const expectedToolSecret = env.KAPSO_MENU_TOOL_SECRET;
+    const isToolAuthed = Boolean(
+      (expectedToolSecret && token === expectedToolSecret) ||
+      (!expectedToolSecret && env.SESSION_SECRET && token === env.SESSION_SECRET)
+    );
+
+    let authenticatedUser: AuthenticatedUser | null = null;
+    if (!isToolAuthed) {
+      authenticatedUser = await authenticate(request, env, fetchFn);
+      if (!authenticatedUser) {
+        return jsonResponse(401, { error: "Autenticación requerida para enviar imágenes del menú" });
+      }
+    }
+
+    // 2. Parse input body
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return jsonResponse(400, { error: "Payload JSON inválido" });
+    }
+
+    // 3. Resolve recipient phone from conversation context or input
+    let targetPhone = String(body.customer_phone || body.phone || "").trim();
+    const conversationId = String(body.conversation_id || "").trim();
+
+    if (!targetPhone && conversationId) {
+      try {
+        const sbConfig = getSupabaseConfig(env);
+        const events = await supabaseRequest<any[]>(
+          "/rest/v1/crm_inbound_events",
+          {
+            privileged: true,
+            query: {
+              business_id: "eq." + env.CRM_BUSINESS_ID,
+              conversation_id: "eq." + conversationId,
+              customer_phone: "not.is.null",
+              select: "customer_phone",
+              limit: "1"
+            }
+          },
+          sbConfig,
+          fetchFn
+        );
+        if (events && events.length > 0 && events[0]?.customer_phone) {
+          targetPhone = events[0].customer_phone;
+        } else {
+          const orders = await supabaseRequest<any[]>(
+            "/rest/v1/orders",
+            {
+              privileged: true,
+              query: {
+                business_id: "eq." + env.CRM_BUSINESS_ID,
+                conversation_id: "eq." + conversationId,
+                customer_phone: "not.is.null",
+                select: "customer_phone",
+                limit: "1"
+              }
+            },
+            sbConfig,
+            fetchFn
+          );
+          if (orders && orders.length > 0 && orders[0]?.customer_phone) {
+            targetPhone = orders[0].customer_phone;
+          }
+        }
+      } catch {
+        // Fallback or error handled below
+      }
+    }
+
+    // Validate phone format (E.164 digits)
+    const cleanPhone = targetPhone.replace(/[\s\-\(\)]/g, "");
+    if (!cleanPhone || !/^\+?[1-9]\d{7,14}$/.test(cleanPhone)) {
+      return jsonResponse(422, {
+        error: "No fue posible resolver un destinatario válido desde el contexto de la conversación"
+      });
+    }
+
+    const whatsappRecipient = cleanPhone.replace(/^\+/, "");
+
+    // 4. Validate connected phone number ID and Kapso credentials
+    const expectedPhoneId = "1462335776957834";
+    const configuredPhoneId = String(env.KAPSO_PHONE_NUMBER_ID || expectedPhoneId).trim();
+    if (configuredPhoneId !== expectedPhoneId) {
+      return jsonResponse(500, {
+        error: "KAPSO_PHONE_NUMBER_ID no coincide con el número oficial conectado para Mr. Burger"
+      });
+    }
+
+    if (!env.KAPSO_API_KEY) {
+      return jsonResponse(500, {
+        error: "KAPSO_API_KEY no configurada en el servidor"
+      });
+    }
+
+    // 5. Select pages according to requested category
+    const category = String(body.category || "all").trim().toLowerCase();
+    const crmOrigin = url.origin;
+
+    const page1 = {
+      key: "page_1",
+      name: "Hamburguesas, Boneless y Complementos",
+      url: `${crmOrigin}/menu/mr-burger-hamburguesas-boneless-complementos.png`,
+    };
+
+    const page2 = {
+      key: "page_2",
+      name: "Bebidas, Extras y Postres",
+      url: `${crmOrigin}/menu/mr-burger-bebidas-extras-postres.png`,
+    };
+
+    let pagesToSend: typeof page1[] = [];
+    if (["hamburguesas", "boneless", "complementos", "page_1", "1"].includes(category)) {
+      pagesToSend = [page1];
+    } else if (["bebidas", "extras", "postres", "page_2", "2"].includes(category)) {
+      pagesToSend = [page2];
+    } else {
+      // General request: send both in order
+      pagesToSend = [page1, page2];
+    }
+
+    // 6. Send each image in order via Kapso Meta Proxy
+    const sent: string[] = [];
+    const messageIds: string[] = [];
+
+    for (let i = 0; i < pagesToSend.length; i++) {
+      const page = pagesToSend[i];
+      const kapsoEndpoint = `https://api.kapso.ai/meta/whatsapp/v24.0/${configuredPhoneId}/messages`;
+      const messagePayload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: whatsappRecipient,
+        type: "image",
+        image: {
+          link: page.url
+        }
+      };
+
+      let response: Response;
+      try {
+        response = await fetchFn(kapsoEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": env.KAPSO_API_KEY
+          },
+          body: JSON.stringify(messagePayload)
+        });
+      } catch (err: any) {
+        return jsonResponse(502, {
+          ok: false,
+          partial: sent.length > 0,
+          sent,
+          failed: [page.key],
+          error: "Error de red al conectar con Kapso/WhatsApp"
+        });
+      }
+
+      const resJson = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const errorMsg = (resJson as any)?.error?.message || `HTTP ${response.status} de API de mensajería`;
+        return jsonResponse(response.status >= 500 ? 502 : 400, {
+          ok: false,
+          partial: sent.length > 0,
+          sent,
+          failed: [page.key],
+          error: errorMsg
+        });
+      }
+
+      const msgId = (resJson as any)?.messages?.[0]?.id || `wamid.menu_${Date.now()}_${i}`;
+      sent.push(page.key);
+      messageIds.push(msgId);
+    }
+
+    return jsonResponse(200, {
+      ok: true,
+      sent,
+      message_ids: messageIds
     });
   }
 

@@ -676,7 +676,10 @@ label {
   padding: 16px;
 }
 
-.modal-backdrop[hidden] {
+.modal-backdrop[hidden],
+.notif-dropdown[hidden],
+.form-card[hidden],
+.handoff-target-banner[hidden] {
   display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;

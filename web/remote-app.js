@@ -747,9 +747,15 @@ async function rejectPaymentAction(orderId, folio) {
 function closeReceiptModal() {
   const modal = $("modal-receipt");
   if (modal) {
+    modal.style.display = "none";
     modal.hidden = true;
     modal.setAttribute("hidden", "");
   }
+  const fileInput = $("receipt-file-input");
+  if (fileInput) fileInput.value = "";
+  const bankRef = $("receipt-bank-ref");
+  if (bankRef) bankRef.value = "";
+  currentModalOrderId = null;
 }
 
 function openReceiptModal(orderId, folio) {
@@ -763,6 +769,7 @@ function openReceiptModal(orderId, folio) {
   $("receipt-modal-title").textContent = `Comprobante de Transferencia · ${folio}`;
   const preview = $("receipt-preview-container");
   preview.replaceChildren(node("p", "Buscando comprobante adjunto…", "muted"));
+  modal.style.display = "flex";
   modal.hidden = false;
   modal.removeAttribute("hidden");
 
