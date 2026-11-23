@@ -224,18 +224,26 @@ export async function handleRequest(
 
   // --- MENU IMAGE DISPATCH ENDPOINT (Kapso WhatsApp Integration) ---
   if (method === "POST" && url.pathname === "/api/menu/send-image") {
-    // 1. Authenticate (Server-to-Server API key or CRM Session Cookie)
+    // 1. Authenticate (Dedicated tool secret: KAPSO_MENU_TOOL_SECRET, never KAPSO_API_KEY)
+    const toolSecretHeader = request.headers.get("x-menu-tool-secret") || "";
     const authHeader = request.headers.get("authorization") || request.headers.get("x-api-key") || "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const validSecrets = [
-      env.KAPSO_API_KEY,
-      env.SESSION_SECRET,
-      env.SUPABASE_SERVICE_ROLE_KEY
-    ].filter(Boolean) as string[];
+    const token = toolSecretHeader.trim() || authHeader.replace(/^Bearer\s+/i, "").trim();
 
-    const isS2S = validSecrets.some(sec => sec === token);
+    // Explicitly disallow KAPSO_API_KEY as incoming authentication secret
+    if (env.KAPSO_API_KEY && token === env.KAPSO_API_KEY) {
+      return jsonResponse(401, {
+        error: "KAPSO_API_KEY no está permitida como secreto de autenticación entrante. Configure y use KAPSO_MENU_TOOL_SECRET."
+      });
+    }
+
+    const expectedToolSecret = env.KAPSO_MENU_TOOL_SECRET;
+    const isToolAuthed = Boolean(
+      (expectedToolSecret && token === expectedToolSecret) ||
+      (!expectedToolSecret && env.SESSION_SECRET && token === env.SESSION_SECRET)
+    );
+
     let authenticatedUser: AuthenticatedUser | null = null;
-    if (!isS2S) {
+    if (!isToolAuthed) {
       authenticatedUser = await authenticate(request, env, fetchFn);
       if (!authenticatedUser) {
         return jsonResponse(401, { error: "Autenticación requerida para enviar imágenes del menú" });

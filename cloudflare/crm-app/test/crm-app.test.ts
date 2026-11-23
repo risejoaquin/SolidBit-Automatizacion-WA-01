@@ -22,6 +22,7 @@ const testEnv: Env = {
   KAPSO_WORKER_EMBED_APPROVED: "false",
   KAPSO_WORKER_ASSIGNEE_ID: "assignee-worker-1",
   KAPSO_API_KEY: "mock-kapso-api-key",
+  KAPSO_MENU_TOOL_SECRET: "mock-menu-tool-secret",
   KAPSO_PHONE_NUMBER_ID: "1462335776957834",
   WORKER_VERSION: "1.1.0",
   ENVIRONMENT: "test"
@@ -2135,16 +2136,29 @@ test("42. Assets estáticos del menú: GET /menu/... sirve recurso o 404 control
   }
 });
 
-test("43. Envío de imágenes del menú: POST /api/menu/send-image rechaza sin autenticación (401)", async () => {
-  const req = new Request("https://crm.local/api/menu/send-image", {
+test("43. Envío de imágenes del menú: POST /api/menu/send-image rechaza sin autenticación o con KAPSO_API_KEY (401)", async () => {
+  // Sin autenticación
+  const reqNoAuth = new Request("https://crm.local/api/menu/send-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ category: "all", customer_phone: "+526623492970" })
   });
-  const res = await handleRequest(req, testEnv);
-  assert.equal(res.status, 401);
-  const data = (await res.json()) as any;
-  assert.equal(data.error, "Autenticación requerida para enviar imágenes del menú");
+  const resNoAuth = await handleRequest(reqNoAuth, testEnv);
+  assert.equal(resNoAuth.status, 401);
+
+  // Intento de autenticación entrante con KAPSO_API_KEY (prohibido)
+  const reqApiKey = new Request("https://crm.local/api/menu/send-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Menu-Tool-Secret": "mock-kapso-api-key"
+    },
+    body: JSON.stringify({ category: "all", customer_phone: "+526623492970" })
+  });
+  const resApiKey = await handleRequest(reqApiKey, testEnv);
+  assert.equal(resApiKey.status, 401);
+  const dataApiKey = (await resApiKey.json()) as any;
+  assert.ok(dataApiKey.error.includes("KAPSO_MENU_TOOL_SECRET"));
 });
 
 test("44. Envío de imágenes del menú: categoría 'all' envía ambas páginas en orden y resuelve teléfono de conversación", async () => {
@@ -2169,7 +2183,7 @@ test("44. Envío de imágenes del menú: categoría 'all' envía ambas páginas 
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": "mock-kapso-api-key"
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
     },
     body: JSON.stringify({
       category: "all",
@@ -2209,7 +2223,7 @@ test("45. Envío de imágenes del menú: categorías específicas envían solo l
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": "mock-kapso-api-key"
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
     },
     body: JSON.stringify({
       category: "hamburguesas",
@@ -2229,7 +2243,7 @@ test("45. Envío de imágenes del menú: categorías específicas envían solo l
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": "mock-kapso-api-key"
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
     },
     body: JSON.stringify({
       category: "bebidas",
@@ -2260,7 +2274,7 @@ test("46. Envío de imágenes del menú: fallo en API externa interrumpe envío 
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": "mock-kapso-api-key"
+      "X-Menu-Tool-Secret": "mock-menu-tool-secret"
     },
     body: JSON.stringify({
       category: "all",

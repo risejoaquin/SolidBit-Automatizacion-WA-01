@@ -1,0 +1,8 @@
+definition: definition.json
+name: Mr. Burger — E2E Primer Cliente (Empalme)
+slug: mr-burger-e2e-primer-cliente-empalme
+status: active
+triggers:
+  - active: true
+    phoneNumberId: "1462335776957834"
+    triggerType: inbound_message
