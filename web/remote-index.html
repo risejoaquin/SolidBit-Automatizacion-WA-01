@@ -272,11 +272,11 @@
 </section>
 
 <!-- Modal para adjuntar o inspeccionar comprobante de transferencia -->
-<div id="modal-receipt" class="modal-backdrop" hidden>
+<div id="modal-receipt" class="modal-backdrop" style="display: none;" hidden>
   <div class="modal-card">
     <div class="modal-header">
       <h3 id="receipt-modal-title">Comprobante de Transferencia</h3>
-      <button id="modal-receipt-close" class="btn-close" aria-label="Cerrar modal">×</button>
+      <button type="button" id="modal-receipt-close" class="btn-close" aria-label="Cerrar modal">×</button>
     </div>
     <div class="modal-body">
       <div id="receipt-preview-container" class="receipt-preview-box"></div>
@@ -291,8 +291,8 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button id="modal-receipt-cancel" class="btn-secondary">Cerrar</button>
-      <button id="modal-receipt-submit" class="btn-primary">Subir y Asociar Comprobante</button>
+      <button type="button" id="modal-receipt-cancel" class="btn-secondary">Cerrar</button>
+      <button type="button" id="modal-receipt-submit" class="btn-primary">Subir y Asociar Comprobante</button>
     </div>
   </div>
 </div>
