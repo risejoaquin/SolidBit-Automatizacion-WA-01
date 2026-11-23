@@ -81,13 +81,13 @@ Usa solo estos datos recibidos para Empalme. No inventes productos, ingredientes
 
 # MENÚ EN IMAGEN
 - Dispones de la herramienta webhook enviar_menu_imagen para enviar las imágenes oficiales de Mr. Burger por WhatsApp al cliente.
-- Cuando el cliente pida “el menú”, “verlo en imagen” o consultar las opciones generales, invoca enviar_menu_imagen con category: "all" para enviar ambas páginas en orden (Página 1: hamburguesas/boneless/complementos, Página 2: bebidas/extras/postres).
-- Si el cliente pide una categoría concreta, envía solo la página correspondiente:
-  - Hamburguesas, boneless o complementos: invoca enviar_menu_imagen con category: "hamburguesas".
-  - Bebidas, extras o postres: invoca enviar_menu_imagen con category: "bebidas".
-- No envíes imágenes automáticamente en cada conversación ni cuando el cliente ya hizo un pedido concreto.
-- Confirmación de envío: Solo después de que la herramienta devuelva éxito (ok: true), responde brevemente y con calidez, por ejemplo: “Claro, aquí está el menú 🍔”.
-- Manejo de fallos: Si la herramienta falla o no devuelve éxito, no digas que se envió. Ofrece ayuda breve con la categoría solicitada respondiendo en texto.
+- Cuando el cliente pida “el menú”, “verlo en imagen” o las opciones generales, invoca la herramienta con category: "all" para enviar ambas páginas en orden.
+- Si pide hamburguesas, boneless o complementos, usa category: "hamburguesas". Si pide bebidas, extras o postres, usa category: "bebidas".
+- En cada llamada incluye también conversation_id y customer_phone. Toma sus valores exactamente del contexto de ejecución actual: conversation_id = context.conversation_id y customer_phone = context.phone_number. No uses context.conversation.id, no preguntes estos datos al cliente y nunca los inventes.
+- Si context.conversation_id o context.phone_number no aparecen en el contexto actual, no llames la herramienta; responde con texto y no afirmes que enviaste una imagen.
+- No envíes imágenes automáticamente ni cuando el cliente ya hizo un pedido concreto.
+- Si la herramienta devuelve éxito (ok: true), no envíes ningún mensaje de texto ni confirmación: termina el turno en silencio y espera a que el cliente haga su pedido. Las imágenes son la única respuesta al pedir el menú en imagen.
+- Si falla, responde solo: “No pude enviar la imagen.” No compartas el menú por texto ni expliques la causa salvo que el cliente pregunte.
 
 # ARMAR EL PEDIDO
 - Registra en el contexto los artículos, cantidades, sabores/modificadores, modalidad, ubicación, forma de pago y horario que el cliente ya dio. No pidas otra vez datos existentes.
@@ -154,40 +154,50 @@ Sé amable, simple y útil. Responde lo que el cliente pidió, pregunta como má
     "flow_agent_function_tools": [],
     "flow_agent_app_integration_tools": [],
     "flow_agent_webhooks": [
-      {
-        "name": "enviar_menu_imagen",
-        "description": "Envía las imágenes oficiales del menú de Mr. Burger por WhatsApp al cliente. Permite enviar ambas páginas ('all') o solo una página por categoría ('hamburguesas' o 'bebidas').",
-        "url": "https://solidbit-crm-demo.solidbit-whatsapp-agent.workers.dev/api/menu/send-image",
-        "http_method": "POST",
-        "headers": {
-          "X-Menu-Tool-Secret": "{{vars.KAPSO_MENU_TOOL_SECRET}}",
-          "Content-Type": "application/json"
-        },
-        "body": {
-          "category": "{{category}}",
-          "customer_phone": "{{context.phone_number}}",
-          "conversation_id": "{{context.conversation.id}}"
-        },
+    {
+        "ai_field_config": {},
+        "body": {},
         "body_schema": {
-          "type": "object",
-          "properties": {
-            "category": {
-              "type": "string",
-              "enum": [
-                "all",
-                "hamburguesas",
-                "bebidas"
-              ],
-              "description": "Categoría a enviar: 'all' para el menú completo (ambas páginas en orden), 'hamburguesas' para hamburguesas, boneless y complementos, o 'bebidas' para bebidas, extras y postres."
-            }
-          },
-          "required": [
-            "category"
-          ]
+            "properties": {
+                "category": {
+                    "description": "Categoría del menú: all, hamburguesas o bebidas.",
+                    "enum": [
+                        "all",
+                        "hamburguesas",
+                        "bebidas"
+                    ],
+                    "id": "id_menu_category_v1",
+                    "type": "string"
+                },
+                "conversation_id": {
+                    "description": "Valor exacto de context.conversation_id del contexto actual.",
+                    "id": "id_menu_conversation_id_v1",
+                    "type": "string"
+                },
+                "customer_phone": {
+                    "description": "Valor exacto de context.phone_number del contexto actual; número WhatsApp del cliente.",
+                    "id": "id_menu_customer_phone_v1",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "category",
+                "customer_phone",
+                "conversation_id"
+            ],
+            "type": "object"
         },
-        "jmespath_query": null
-      }
-    ],
+        "description": "Envía las imágenes oficiales del menú de Mr. Burger por WhatsApp. Obligatorio: manda category, customer_phone copiado exactamente de context.phone_number y conversation_id copiado exactamente de context.conversation_id. Nunca uses context.conversation.id, preguntes ni inventes esos datos. Usa all para las dos páginas, hamburguesas para página 1 y bebidas para página 2.",
+        "headers": {
+            "Content-Type": "application/json",
+            "X-Menu-Tool-Secret": "${ENV:KAPSO_MENU_TOOL_SECRET}"
+        },
+        "http_method": "POST",
+        "jmespath_query": null,
+        "name": "enviar_menu_imagen",
+        "url": "https://solidbit-crm-demo.solidbit-whatsapp-agent.workers.dev/api/menu/send-image"
+    }
+],
     "flow_agent_knowledge_bases": [],
     "flow_agent_mcp_servers": [],
     "flow_agent_resources": []
