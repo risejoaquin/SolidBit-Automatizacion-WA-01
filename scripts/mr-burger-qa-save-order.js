@@ -73,6 +73,25 @@ export async function handler(request, env) {
   }
 
   try {
+    if (input.action === "send_menu_image" || input.action === "enviar_menu_imagen") {
+      const crmUrl = "https://solidbit-crm-demo.solidbit-whatsapp-agent.workers.dev/api/menu/send-image";
+      const apiKey = env.KAPSO_API_KEY || env.SESSION_SECRET || secret;
+      const resp = await fetch(crmUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey
+        },
+        body: JSON.stringify({
+          category: input.category || "all",
+          conversation_id: conversationId,
+          customer_phone: customerPhone
+        })
+      });
+      const data = await resp.json().catch(() => ({ ok: false, error: "Error de comunicación con CRM" }));
+      return send(data, resp.status);
+    }
+
     if (input.action === "menu") {
       const r = await fetch(
         baseUrl + "/rest/v1/menu_products?active=eq.true&select=sku,category,name,price_cents,description&order=category,name",

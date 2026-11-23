@@ -16,10 +16,22 @@ const faviconSvg = existsSync("web/brand/solidbit-favicon.svg")
   ? readFileSync("web/brand/solidbit-favicon.svg", "utf8")
   : "";
 
+// Read menu PNG images (if available in repository)
+const menu1Path = "web/menu/mr-burger-hamburguesas-boneless-complementos.png";
+const menu1Base64 = existsSync(menu1Path)
+  ? readFileSync(menu1Path).toString("base64")
+  : "";
+
+const menu2Path = "web/menu/mr-burger-bebidas-extras-postres.png";
+const menu2Base64 = existsSync(menu2Path)
+  ? readFileSync(menu2Path).toString("base64")
+  : "";
+
 const out = `// Embedded static assets from web/ for instant edge delivery
 export interface StaticAsset {
   content: string;
   contentType: string;
+  isBase64?: boolean;
 }
 
 export const staticAssets: Record<string, StaticAsset> = {
@@ -54,6 +66,16 @@ export const staticAssets: Record<string, StaticAsset> = {
   "/brand/solidbit-favicon.svg": {
     content: ${JSON.stringify(faviconSvg)},
     contentType: "image/svg+xml; charset=utf-8"
+  },
+  "/menu/mr-burger-hamburguesas-boneless-complementos.png": {
+    content: ${JSON.stringify(menu1Base64)},
+    contentType: "image/png",
+    isBase64: true
+  },
+  "/menu/mr-burger-bebidas-extras-postres.png": {
+    content: ${JSON.stringify(menu2Base64)},
+    contentType: "image/png",
+    isBase64: true
   }
 };
 `;
