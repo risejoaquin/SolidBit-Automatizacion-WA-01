@@ -2874,3 +2874,169 @@ test("58. El contrato de la herramienta de Kapso coincide con lo que valida el e
   assert.equal(data.total_cents, 20000); // 13500 + 2500 + 4000
   assert.equal(data.total_formatted, "$200");
 });
+
+test("59. Tarjeta sin comprobante rechazada y sin crear pedido (HTTP 400 MISSING_CARD_PAYMENT_RECEIPT)", async () => {
+  const dbOrders: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      dbOrders.push(JSON.parse(String(opts.body)));
+      return new Response(JSON.stringify([{ id: "should-not-exist" }]), { status: 201 });
+    }
+    if (u.includes("/rest/v1/crm_payment_receipts")) {
+      return new Response(JSON.stringify([]), { status: 200 }); // Sin comprobante
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "card",
+      customer_phone: "+526221234567",
+      conversation_id: "conv-card-no-receipt"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 400);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.equal(data.code, "MISSING_CARD_PAYMENT_RECEIPT");
+  assert.equal(dbOrders.length, 0); // No se crea ningún pedido
+});
+
+test("60. Tarjeta con imagen de comprobante se asocia al pedido y queda en pending_verification (nunca pagada)", async () => {
+  let createdOrder: any = null;
+  let receiptPatched: any = null;
+  const mockReceipt = {
+    id: "receipt-uuid-123",
+    business_id: TEST_BUSINESS_ID,
+    storage_path: "business/receipts/proof.jpg",
+    mime_type: "image/jpeg",
+    status: "pending_association",
+    conversation_id: "conv-card-with-receipt"
+  };
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_payment_receipts")) {
+      if (opts?.method === "PATCH") {
+        receiptPatched = JSON.parse(String(opts.body));
+        return new Response(JSON.stringify([{ ...mockReceipt, ...receiptPatched }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([mockReceipt]), { status: 200 });
+    }
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      createdOrder = JSON.parse(String(opts.body));
+      return new Response(JSON.stringify([createdOrder]), { status: 201 });
+    }
+    if (u.includes("crm_create_notification") || u.includes("/rest/v1/crm_notifications")) {
+      return new Response(JSON.stringify([{ id: "notif-card" }]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Tocino", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "card",
+      customer_phone: "+526221234567",
+      conversation_id: "conv-card-with-receipt"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.equal(data.payment_status, "pending_verification");
+  assert.notEqual(data.payment_status, "paid");
+
+  // DB assertions
+  assert.ok(createdOrder);
+  assert.equal(createdOrder.payment_method, "card");
+  assert.equal(createdOrder.payment_status, "pending");
+  assert.ok(receiptPatched);
+  assert.equal(receiptPatched.status, "pending_validation");
+  assert.equal(receiptPatched.order_id, createdOrder.id);
+});
+
+test("61. Valor de pago desconocido rechazado, nunca convertido a efectivo (HTTP 400 INVALID_PAYMENT_METHOD)", async () => {
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "bitcoin_crypto",
+      customer_phone: "+526221234567"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv);
+  assert.equal(res.status, 400);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.equal(data.code, "INVALID_PAYMENT_METHOD");
+});
+
+test("62. Pedido para recoger sin especificar pago asume efectivo por defecto y no requiere ubicación", async () => {
+  let createdOrder: any = null;
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      createdOrder = JSON.parse(String(opts.body));
+      return new Response(JSON.stringify([createdOrder]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      // payment_method omitido
+      customer_phone: "+526221234567"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.equal(data.fulfillment, "pickup");
+  assert.equal(data.payment_status, "pending");
+  assert.equal(data.shipping_cents, 0);
+  assert.equal(createdOrder.payment_method, "cash");
+  assert.equal(createdOrder.address, null);
+});
+
+test("63. Reglas del bot en Kapso: saludo sin invitación a ordenar, no repetir resumen, handoff solo ante solicitud explícita", async () => {
+  const fs = await import("fs");
+  const path = await import("path");
+  const workflowPath = path.resolve("workflows/mr-burger-e2e-primer-cliente-empalme/workflow.js");
+  const code = fs.readFileSync(workflowPath, "utf8");
+
+  // 1. Saludo sin invitación a ordenar
+  assert.ok(code.includes("Si el cliente solo saluda (ej. “hola”, “buenas tardes”), contesta únicamente un saludo breve y natural"));
+  assert.ok(code.includes("No preguntes qué se le antoja ni lo invites a ordenar"));
+
+  // 2. No repetir resumen en cada turno
+  assert.ok(code.includes("No repitas el pedido como resumen en cada turno ni agregues explicaciones"));
+
+  // 3. Handoff solo ante solicitud explícita y no automático ante fallo
+  assert.ok(code.includes("NO ejecutes handoff_to_human automáticamente ante un fallo de registro"));
+  assert.ok(code.includes("Ejecuta la herramienta handoff_to_human ÚNICAMENTE si el cliente solicita de forma explícita hablar con una persona"));
+
+  // 4. Tarjeta no se convierte a efectivo y exige comprobante
+  assert.ok(code.includes("Tarjeta (card): el sistema no la convierte a efectivo. Requiere que el cliente envíe foto/captura del comprobante"));
+});

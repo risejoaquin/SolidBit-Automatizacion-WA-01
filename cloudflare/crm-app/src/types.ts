@@ -135,7 +135,7 @@ export interface CrmOrder {
   fulfillment: "pickup" | "delivery";
   address?: string | null;
   delivery_references?: string | null;
-  payment_method: "cash" | "transfer";
+  payment_method: "cash" | "transfer" | "card";
   payment_status: PaymentStatus;
   order_status: OrderStatus;
   created_at: string;

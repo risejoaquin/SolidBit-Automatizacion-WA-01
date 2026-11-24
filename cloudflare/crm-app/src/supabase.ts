@@ -1417,9 +1417,10 @@ export interface CreateKapsoOrderParams {
   fulfillment: "pickup" | "delivery";
   address?: string | null;
   deliveryReferences?: string | null;
-  paymentMethod: "cash" | "transfer";
+  paymentMethod: "cash" | "transfer" | "card";
   paymentStatus: "pending";
   orderStatus: "received";
+  associatedReceiptId?: string | null;
 }
 
 export async function createKapsoOrder(
@@ -1520,19 +1521,48 @@ export async function createKapsoOrder(
     fulfillment: params.fulfillment
   };
 
-  // 3. Emit CRM Notification
+  // 3. Link associated payment receipt if present (e.g. card/transfer receipt)
+  if (params.associatedReceiptId) {
+    await supabaseRequest(
+      "/rest/v1/crm_payment_receipts",
+      {
+        method: "PATCH",
+        privileged: true,
+        query: {
+          id: "eq." + params.associatedReceiptId,
+          business_id: "eq." + config.businessId
+        },
+        body: {
+          order_id: orderId,
+          status: "pending_validation"
+        }
+      },
+      config,
+      fetchFn
+    ).catch(() => null);
+  }
+
+  // 4. Emit CRM Notification
+  const isPendingHumanValidation = params.paymentMethod === "transfer" || params.paymentMethod === "card";
+  const notifType = isPendingHumanValidation ? "transfer_validation" : "order_confirmed";
+  const notifPriority = isPendingHumanValidation ? "high" : "normal";
+  const notifTitle = params.paymentMethod === "card"
+    ? "Pedido con tarjeta pendiente (#" + folio + ")"
+    : params.paymentMethod === "transfer"
+    ? "Pedido por transferencia pendiente (#" + folio + ")"
+    : "Nuevo pedido recibido (#" + folio + ")";
+  const notifMessage = isPendingHumanValidation
+    ? "Pedido #" + folio + " ($" + Math.round(params.totalCents / 100) + ") con pago " + (params.paymentMethod === "card" ? "tarjeta" : "transferencia") + " pendiente de comprobante y validación."
+    : "Pedido #" + folio + " (" + (params.fulfillment === "delivery" ? "Domicilio" : "Recoger") + ") recibido por $" + Math.round(params.totalCents / 100) + ".";
+
   await createNotification(
     {
       businessId: config.businessId,
-      eventKey: (params.paymentMethod === "transfer" ? "order_transfer_pending:" : "order_confirmed:") + orderId,
-      type: params.paymentMethod === "transfer" ? "transfer_validation" : "order_confirmed",
-      priority: params.paymentMethod === "transfer" ? "high" : "normal",
-      title: params.paymentMethod === "transfer"
-        ? "Pedido por transferencia pendiente (#" + folio + ")"
-        : "Nuevo pedido recibido (#" + folio + ")",
-      message: params.paymentMethod === "transfer"
-        ? "Pedido #" + folio + " ($" + Math.round(params.totalCents / 100) + ") pendiente de comprobante y validación."
-        : "Pedido #" + folio + " (" + (params.fulfillment === "delivery" ? "Domicilio" : "Recoger") + ") recibido por $" + Math.round(params.totalCents / 100) + ".",
+      eventKey: (isPendingHumanValidation ? "order_validation_pending:" + params.paymentMethod + ":" : "order_confirmed:") + orderId,
+      type: notifType,
+      priority: notifPriority,
+      title: notifTitle,
+      message: notifMessage,
       resourceType: "order",
       resourceId: orderId,
       recipientRole: "all",
@@ -1549,7 +1579,7 @@ export async function createKapsoOrder(
     fetchFn
   ).catch(() => null);
 
-  // 4. Record order history
+  // 5. Record order history
   await addOrderHistory(
     {
       orderId: orderId,

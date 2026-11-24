@@ -554,10 +554,90 @@ export async function handleRequest(
       }
     }
 
-    // 8. Payment method normalization
-    const rawPayment = String(body.payment_method || body.payment || "cash").trim().toLowerCase();
-    const paymentMethod: "cash" | "transfer" =
-      ["transfer", "transferencia", "spei", "banco"].includes(rawPayment) ? "transfer" : "cash";
+    // 8. Payment method normalization & strict validation
+    const rawPayment = String(body.payment_method || body.payment || "").trim().toLowerCase();
+    let paymentMethod: "cash" | "transfer" | "card";
+
+    if (!rawPayment) {
+      paymentMethod = "cash";
+    } else if (["cash", "efectivo"].includes(rawPayment)) {
+      paymentMethod = "cash";
+    } else if (["transfer", "transferencia", "spei", "banco"].includes(rawPayment)) {
+      paymentMethod = "transfer";
+    } else if (["card", "tarjeta", "terminal", "debito", "credito"].includes(rawPayment)) {
+      paymentMethod = "card";
+    } else {
+      return jsonResponse(400, {
+        ok: false,
+        error: `Método de pago no admitido o desconocido ('${body.payment_method || body.payment}'). Debe ser 'cash', 'transfer' o 'card'.`,
+        code: "INVALID_PAYMENT_METHOD"
+      });
+    }
+
+    // Check receipt for card payment (must have an existing image receipt in the conversation or explicitly passed)
+    let associatedReceiptId: string | null = null;
+    if (paymentMethod === "card") {
+      let candidateReceipts: any[] = [];
+      const convId = String(body.conversation_id || "").trim();
+      if (body.receipt_id) {
+        candidateReceipts = await supabaseRequest<any[]>(
+          "/rest/v1/crm_payment_receipts",
+          {
+            privileged: true,
+            query: {
+              select: "id,order_id,storage_path,mime_type,status,conversation_id",
+              business_id: "eq." + sbConfig.businessId,
+              id: "eq." + body.receipt_id,
+              limit: "1"
+            }
+          },
+          sbConfig,
+          fetchFn
+        ).catch(() => []);
+      } else if (convId) {
+        const receipts = await supabaseRequest<any[]>(
+          "/rest/v1/crm_payment_receipts",
+          {
+            privileged: true,
+            query: {
+              select: "id,order_id,storage_path,mime_type,status,conversation_id,created_at",
+              business_id: "eq." + sbConfig.businessId,
+              conversation_id: "eq." + convId,
+              order: "created_at.desc",
+              limit: "5"
+            }
+          },
+          sbConfig,
+          fetchFn
+        ).catch(() => []);
+        candidateReceipts = receipts || [];
+      } else if (body.receipt_storage_path) {
+        candidateReceipts = await supabaseRequest<any[]>(
+          "/rest/v1/crm_payment_receipts",
+          {
+            privileged: true,
+            query: {
+              select: "id,order_id,storage_path,mime_type,status",
+              business_id: "eq." + sbConfig.businessId,
+              storage_path: "eq." + body.receipt_storage_path,
+              limit: "1"
+            }
+          },
+          sbConfig,
+          fetchFn
+        ).catch(() => []);
+      }
+
+      if (!candidateReceipts || candidateReceipts.length === 0) {
+        return jsonResponse(400, {
+          ok: false,
+          error: "Para pago con tarjeta se requiere un comprobante de imagen recibido y asociado previamente en la conversación. Sin comprobante no se puede registrar el pedido.",
+          code: "MISSING_CARD_PAYMENT_RECEIPT"
+        });
+      }
+
+      associatedReceiptId = candidateReceipts[0].id;
+    }
 
     // 9. Items catalog validation and price calculation
     const rawItems = body.items;
@@ -633,7 +713,8 @@ export async function handleRequest(
           deliveryReferences: body.notes || body.delivery_references || null,
           paymentMethod,
           paymentStatus: "pending",
-          orderStatus: "received"
+          orderStatus: "received",
+          associatedReceiptId
         },
         sbConfig,
         fetchFn
@@ -659,7 +740,7 @@ export async function handleRequest(
       folio: order?.folio ? (order.folio.startsWith("#") ? order.folio : `#${order.folio}`) : `#MB-${String(order?.id || "000000").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`,
       order_id: order.id,
       order_status: order.order_status,
-      payment_status: paymentMethod === "transfer" ? "pending_verification" : "pending",
+      payment_status: (paymentMethod === "transfer" || paymentMethod === "card") ? "pending_verification" : "pending",
       subtotal_cents: order.subtotal_cents || priced.subtotal_cents,
       shipping_cents: order.shipping_cents ?? priced.shipping_cents,
       total_cents: order.total_cents || priced.total_cents,
