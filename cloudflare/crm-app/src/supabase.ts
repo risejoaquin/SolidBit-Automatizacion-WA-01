@@ -1203,6 +1203,7 @@ export async function ingestPaymentReceipt(
     kapsoApiKey?: string | null;
     declaredAmountCents?: number | null;
     bankReference?: string | null;
+    paymentMethod?: "card" | "transfer" | null;
     metadata?: Record<string, any>;
   },
   config: SupabaseConfig,
@@ -1210,7 +1211,12 @@ export async function ingestPaymentReceipt(
 ): Promise<{ receipt: CrmPaymentReceipt; duplicate: boolean; associationState: string }> {
   // 1. Pre-check MIME and declared size before any remote call
   let mime = (params.mimeType || "image/jpeg").toLowerCase();
-  if (!ALLOWED_RECEIPT_MIMES.includes(mime)) {
+  const CARD_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
+  if (params.paymentMethod === "card") {
+    if (!CARD_IMAGE_MIMES.includes(mime)) {
+      throw new AppHttpError(415, "Los comprobantes para tarjeta deben ser imágenes (JPEG, PNG o WEBP). No se aceptan archivos PDF.", "CARD_RECEIPT_MUST_BE_IMAGE");
+    }
+  } else if (!ALLOWED_RECEIPT_MIMES.includes(mime)) {
     throw new AppHttpError(415, "Tipo de archivo no permitido. Solo se aceptan JPEG, PNG, WEBP o PDF.", "UNSUPPORTED_MEDIA_TYPE");
   }
   let size = Number(params.fileSize) || 0;
@@ -1245,6 +1251,9 @@ export async function ingestPaymentReceipt(
   if (params.fileBase64) {
     const decoded = decodeBase64Receipt(params.fileBase64, mime);
     mime = decoded.mimeType;
+    if (params.paymentMethod === "card" && !CARD_IMAGE_MIMES.includes(mime)) {
+      throw new AppHttpError(415, "El archivo decodificado para tarjeta no es una imagen válida (JPEG, PNG o WEBP).", "CARD_RECEIPT_MUST_BE_IMAGE");
+    }
     size = decoded.bytes.byteLength;
     const controlledPath = finalStoragePath || buildControlledReceiptStoragePath(
       config.businessId,
@@ -1255,6 +1264,9 @@ export async function ingestPaymentReceipt(
   } else if (params.mediaUrl) {
     const downloaded = await downloadExternalMedia(params.mediaUrl, params.kapsoApiKey, mime, fetchFn);
     mime = downloaded.mimeType;
+    if (params.paymentMethod === "card" && !CARD_IMAGE_MIMES.includes(mime)) {
+      throw new AppHttpError(415, "La imagen descargada para tarjeta no es un formato de imagen permitido.", "CARD_RECEIPT_MUST_BE_IMAGE");
+    }
     size = downloaded.fileSize;
     const controlledPath = finalStoragePath || buildControlledReceiptStoragePath(
       config.businessId,
@@ -1269,14 +1281,15 @@ export async function ingestPaymentReceipt(
   // 3. Unambiguous order association
   let candidateOrders: any[] = [];
   if (params.conversationId || params.customerPhone) {
-    const allPendingTransfers = await supabaseRequest<any[]>(
+    const targetMethod = params.paymentMethod === "card" ? "card" : "transfer";
+    const allPending = await supabaseRequest<any[]>(
       "/rest/v1/orders",
       {
         privileged: true,
         query: {
           select: "id,folio,customer_ref,conversation_id,payment_status,payment_method,total_cents",
           business_id: "eq." + config.businessId,
-          payment_method: "eq.transfer",
+          payment_method: "eq." + targetMethod,
           payment_status: "eq.pending",
           order: "created_at.desc",
           limit: "20"
@@ -1286,7 +1299,7 @@ export async function ingestPaymentReceipt(
       fetchFn
     ).catch(() => []);
 
-    candidateOrders = (allPendingTransfers || []).filter(o => {
+    candidateOrders = (allPending || []).filter(o => {
       const matchConv = params.conversationId && o.conversation_id === params.conversationId;
       const matchPhone = params.customerPhone && (
         o.customer_ref === params.customerPhone ||
@@ -1313,6 +1326,8 @@ export async function ingestPaymentReceipt(
 
   const receiptMeta = {
     ...(params.metadata || {}),
+    ...(params.paymentMethod ? { payment_method: params.paymentMethod } : {}),
+    ...(params.customerPhone ? { customer_phone: params.customerPhone } : {}),
     ...(associationReason ? { association_issue: associationReason, candidate_count: candidateOrders.length } : {})
   };
 
@@ -1346,20 +1361,22 @@ export async function ingestPaymentReceipt(
 
   // 5. Notifications and history
   if (matchedOrderId) {
+    const isCard = params.paymentMethod === "card";
     await createNotification(
       {
         eventKey: `receipt:${receipt.id}`,
         type: "transfer_validation",
         priority: "high",
-        title: "Transferencia por validar",
-        message: `Comprobante recibido para pedido #${candidateOrders[0].folio || matchedOrderId.slice(0, 8)}`,
+        title: isCard ? "Comprobante de tarjeta por validar" : "Transferencia por validar",
+        message: `${isCard ? "Comprobante de tarjeta" : "Comprobante"} recibido para pedido #${candidateOrders[0].folio || matchedOrderId.slice(0, 8)}`,
         resourceType: "order",
         resourceId: matchedOrderId,
         recipientRole: "all",
         metadata: {
           order_id: matchedOrderId,
           receipt_id: receipt.id,
-          declared_amount_cents: receipt.declared_amount_cents
+          declared_amount_cents: receipt.declared_amount_cents,
+          payment_method: params.paymentMethod || "transfer"
         }
       },
       config,

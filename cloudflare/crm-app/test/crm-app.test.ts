@@ -3040,3 +3040,331 @@ test("63. Reglas del bot en Kapso: saludo sin invitación a ordenar, no repetir 
   // 4. Tarjeta no se convierte a efectivo y exige comprobante
   assert.ok(code.includes("Tarjeta (card): el sistema no la convierte a efectivo. Requiere que el cliente envíe foto/captura del comprobante"));
 });
+
+test("64. Ingesta de comprobantes (/api/receipts/ingest): autenticación dedicada con X-Order-Tool-Secret / Bearer, rechaza sin credencial, secreto inválido o KAPSO_API_KEY", async () => {
+  // 1. Sin autenticación -> 401
+  const reqNoAuth = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_name: "test.jpg", storage_path: "test.jpg" })
+  });
+  const resNoAuth = await handleRequest(reqNoAuth, testEnv);
+  assert.equal(resNoAuth.status, 401);
+  const dataNoAuth = (await resNoAuth.json()) as any;
+  assert.equal(dataNoAuth.code, "UNAUTHORIZED");
+
+  // 2. Secreto incorrecto -> 401
+  const reqBadSecret = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "secreto-falso" },
+    body: JSON.stringify({ file_name: "test.jpg", storage_path: "test.jpg" })
+  });
+  const resBadSecret = await handleRequest(reqBadSecret, testEnv);
+  assert.equal(resBadSecret.status, 401);
+  const dataBadSecret = (await resBadSecret.json()) as any;
+  assert.equal(dataBadSecret.code, "INVALID_SECRET");
+
+  // 3. Intento de uso de KAPSO_API_KEY como secreto entrante -> 401
+  const reqKapsoKey = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": testEnv.KAPSO_API_KEY! },
+    body: JSON.stringify({ file_name: "test.jpg", storage_path: "test.jpg" })
+  });
+  const resKapsoKey = await handleRequest(reqKapsoKey, testEnv);
+  assert.equal(resKapsoKey.status, 401);
+  const dataKapsoKey = (await resKapsoKey.json()) as any;
+  assert.equal(dataKapsoKey.code, "INVALID_AUTH_KEY");
+
+  // 4. Secreto válido con X-Order-Tool-Secret -> permitido (201)
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_payment_receipts") && opts?.method === "POST") {
+      const b = JSON.parse(String(opts.body));
+      return new Response(JSON.stringify([{ id: "rec-auth-ok", ...b }]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+  const reqValid = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({ file_name: "rec.jpg", storage_path: "rec.jpg", mime_type: "image/jpeg" })
+  });
+  const resValid = await handleRequest(reqValid, testEnv, mockFetch);
+  assert.equal(resValid.status, 201);
+  const dataValid = (await resValid.json()) as any;
+  assert.equal(dataValid.ok, true);
+  assert.equal(dataValid.receipt.id, "rec-auth-ok");
+});
+
+test("65. Ingesta de comprobante para tarjeta exige MIME de imagen (rechaza PDF con 415) y exige conversación o teléfono", async () => {
+  // 1. Tarjeta con PDF -> rechazado 415 CARD_RECEIPT_MUST_BE_IMAGE
+  const reqPdf = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      file_name: "recibo.pdf",
+      mime_type: "application/pdf",
+      storage_path: "recibo.pdf",
+      payment_method: "card",
+      conversation_id: "conv-card-pdf"
+    })
+  });
+  const resPdf = await handleRequest(reqPdf, testEnv);
+  assert.equal(resPdf.status, 415);
+  const dataPdf = (await resPdf.json()) as any;
+  assert.equal(dataPdf.code, "CARD_RECEIPT_MUST_BE_IMAGE");
+
+  // 2. Tarjeta sin conversation_id ni customer_phone -> rechazado 400 MISSING_CONVERSATION_OR_PHONE
+  const reqNoConv = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      file_name: "recibo.png",
+      mime_type: "image/png",
+      storage_path: "recibo.png",
+      payment_method: "card"
+      // sin conversation_id ni customer_phone
+    })
+  });
+  const resNoConv = await handleRequest(reqNoConv, testEnv);
+  assert.equal(resNoConv.status, 400);
+  const dataNoConv = (await resNoConv.json()) as any;
+  assert.equal(dataNoConv.code, "MISSING_CONVERSATION_OR_PHONE");
+});
+
+test("66. Ingesta duplicada de comprobante con mismo provider_message_id devuelve duplicate: true (200)", async () => {
+  const existingReceipt = {
+    id: "rec-dup-123",
+    business_id: TEST_BUSINESS_ID,
+    provider_message_id: "wam-dup-photo-999",
+    status: "pending_association"
+  };
+
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("provider_message_id=eq.wam-dup-photo-999")) {
+      return new Response(JSON.stringify([existingReceipt]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      file_name: "foto.jpg",
+      storage_path: "foto.jpg",
+      mime_type: "image/jpeg",
+      provider_message_id: "wam-dup-photo-999",
+      conversation_id: "conv-dup-test"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.equal(data.duplicate, true);
+  assert.equal(data.receipt.id, "rec-dup-123");
+});
+
+test("67. Flujo E2E completo: Ingesta de imagen para tarjeta -> Registro exitoso de pedido con tarjeta en pending_verification y comprobante vinculado en pending_validation (nunca pagado)", async () => {
+  const receiptsDb: any[] = [];
+  const ordersDb: any[] = [];
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_payment_receipts")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        const newRec = { id: "receipt-e2e-card", ...body };
+        receiptsDb.push(newRec);
+        return new Response(JSON.stringify([newRec]), { status: 201 });
+      }
+      if (opts?.method === "PATCH") {
+        const patchBody = JSON.parse(String(opts.body));
+        const found = receiptsDb.find(r => u.includes(r.id));
+        if (found) Object.assign(found, patchBody);
+        return new Response(JSON.stringify([found || patchBody]), { status: 200 });
+      }
+      return new Response(JSON.stringify(receiptsDb), { status: 200 });
+    }
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        ordersDb.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      return new Response(JSON.stringify(ordersDb), { status: 200 });
+    }
+    if (u.includes("crm_create_notification") || u.includes("/rest/v1/crm_notifications")) {
+      return new Response(JSON.stringify([{ id: "notif-e2e-card" }]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // Paso 1: Ingesta de imagen entrante de WhatsApp desde Kapso con autenticación dedicada
+  const ingestReq = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify({
+      file_name: "voucher_tarjeta.jpg",
+      mime_type: "image/jpeg",
+      storage_path: "receipts/voucher_tarjeta.jpg",
+      payment_method: "card",
+      conversation_id: "conv-e2e-card-777",
+      customer_phone: "+526229876543",
+      provider_message_id: "wam.e2e.card.01"
+    })
+  });
+  const ingestRes = await handleRequest(ingestReq, testEnv, mockFetch);
+  assert.equal(ingestRes.status, 201);
+  const ingestData = (await ingestRes.json()) as any;
+  assert.equal(ingestData.ok, true);
+  assert.equal(ingestData.duplicate, false);
+  const savedReceipt = ingestData.receipt;
+  assert.equal(savedReceipt.conversation_id, "conv-e2e-card-777");
+  assert.equal(savedReceipt.metadata?.payment_method, "card");
+  assert.equal(savedReceipt.metadata?.customer_phone, "+526229876543");
+
+  // Paso 2: Registro del pedido con tarjeta por parte del bot en Kapso
+  const orderReq = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify({
+      items: [{ product: "Favorita", quantity: 1, modifiers: ["Tocino"] }],
+      fulfillment: "pickup",
+      payment_method: "card",
+      customer_phone: "+526229876543",
+      conversation_id: "conv-e2e-card-777"
+    })
+  });
+  const orderRes = await handleRequest(orderReq, testEnv, mockFetch);
+  assert.equal(orderRes.status, 200);
+  const orderData = (await orderRes.json()) as any;
+  assert.equal(orderData.ok, true);
+  assert.equal(orderData.payment_status, "pending_verification"); // Pendiente de revisión, nunca marcado como pagado
+  assert.notEqual(orderData.payment_status, "paid");
+  assert.ok(orderData.folio.startsWith("#MB-"));
+
+  // Verificaciones en DB
+  assert.equal(ordersDb.length, 1);
+  const dbOrder = ordersDb[0];
+  assert.equal(dbOrder.payment_method, "card");
+  assert.equal(dbOrder.payment_status, "pending"); // DB constraint check
+  assert.equal(receiptsDb.length, 1);
+  assert.equal(receiptsDb[0].order_id, dbOrder.id);
+  assert.equal(receiptsDb[0].status, "pending_validation"); // Vinculado y pendiente de validación humana
+});
+
+test("68. Registro de pedido con tarjeta intentando asociar comprobante de otra conversación o teléfono es rechazado (400 RECEIPT_CONVERSATION_MISMATCH)", async () => {
+  const foreignReceipt = {
+    id: "rec-foreign-999",
+    business_id: TEST_BUSINESS_ID,
+    storage_path: "receipts/foreign.jpg",
+    mime_type: "image/jpeg",
+    status: "pending_association",
+    conversation_id: "conv-customer-alice", // Pertenece a Alice
+    metadata: {
+      customer_phone: "+526221111111",
+      payment_method: "card"
+    }
+  };
+
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_payment_receipts")) {
+      return new Response(JSON.stringify([foreignReceipt]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // Bob intenta usar el comprobante de Alice
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "card",
+      receipt_id: "rec-foreign-999", // Comprobante ajeno
+      customer_phone: "+526229999999", // Teléfono de Bob
+      conversation_id: "conv-customer-bob" // Conversación de Bob
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 400);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.equal(data.code, "RECEIPT_CONVERSATION_MISMATCH");
+});
+
+test("69. Comprobante de transferencia rechazado al registrar pedido con tarjeta (400 INVALID_RECEIPT_TYPE)", async () => {
+  const transferReceipt = {
+    id: "rec-transfer-888",
+    business_id: TEST_BUSINESS_ID,
+    storage_path: "receipts/spei.jpg",
+    mime_type: "image/jpeg",
+    status: "pending_association",
+    conversation_id: "conv-same-client",
+    metadata: {
+      customer_phone: "+526225555555",
+      payment_method: "transfer" // Comprobante emitido como transferencia
+    }
+  };
+
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_payment_receipts")) {
+      return new Response(JSON.stringify([transferReceipt]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // Intento de registrar pedido con tarjeta usando un comprobante de transferencia
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "card",
+      receipt_id: "rec-transfer-888",
+      customer_phone: "+526225555555",
+      conversation_id: "conv-same-client"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 400);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.equal(data.code, "INVALID_RECEIPT_TYPE");
+  assert.ok(data.error.includes("transferencia no puede utilizarse"));
+});
+
+test("70. Ingesta de comprobante con business_id ajeno es rechazado fail-closed (403 BUSINESS_ID_MISMATCH)", async () => {
+  const req = new Request("https://crm.local/api/receipts/ingest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      business_id: "00000000-0000-0000-0000-000000000000",
+      file_name: "comprobante.jpg",
+      storage_path: "comprobante.jpg",
+      mime_type: "image/jpeg"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv);
+  assert.equal(res.status, 403);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.equal(data.code, "BUSINESS_ID_MISMATCH");
+});

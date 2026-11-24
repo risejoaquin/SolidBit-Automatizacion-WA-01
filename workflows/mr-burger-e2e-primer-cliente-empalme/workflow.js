@@ -317,6 +317,10 @@ Sé amable, simple y útil. Responde lo que el cliente pidió, pregunta como má
                             "idempotency_key": {
                                     "type": "string",
                                     "description": "Clave única para evitar duplicar el pedido en reintentos."
+                            },
+                            "receipt_id": {
+                                    "type": "string",
+                                    "description": "ID del comprobante de imagen recibido en la conversación (opcional; el backend lo resuelve automáticamente si ya se recibió una imagen)."
                             }
                     }
             },

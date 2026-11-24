@@ -1,4 +1,4 @@
-import type { Env, AuthenticatedUser, DbSessionRow } from "./types.ts";
+import { type Env, type AuthenticatedUser, type DbSessionRow, AppHttpError } from "./types.ts";
 import { staticAssets } from "./assets.ts";
 import {
   parseSessionCookie,
@@ -166,6 +166,8 @@ export async function handleRequest(
     request.headers.get("x-api-key") ||
     request.headers.get("x-order-tool-secret") ||
     request.headers.get("x-menu-tool-secret") ||
+    request.headers.get("x-receipt-ingest-secret") ||
+    request.headers.get("x-receipt-tool-secret") ||
     request.headers.get("authorization")?.startsWith("Bearer ")
   );
   if (isMutating && !hasS2SAuth) {
@@ -421,6 +423,168 @@ export async function handleRequest(
     });
   }
 
+  // --- RECEIPT INGESTION ENDPOINT (Kapso WhatsApp Integration / S2S & Authenticated User) ---
+  if (method === "POST" && url.pathname === "/api/receipts/ingest") {
+    // 1. Content size guard
+    const cl = request.headers.get("content-length");
+    if (cl && parseInt(cl, 10) > 15 * 1024 * 1024) {
+      return jsonResponse(413, {
+        ok: false,
+        error: "Cuerpo de solicitud demasiado grande (máximo 15MB)",
+        code: "PAYLOAD_TOO_LARGE"
+      });
+    }
+
+    // 2. Authentication: dedicated validated secret or authenticated user session
+    const secretHeader = request.headers.get("x-receipt-ingest-secret") ||
+                         request.headers.get("x-receipt-tool-secret") ||
+                         request.headers.get("x-order-tool-secret") || "";
+    const authHeader = request.headers.get("authorization") || request.headers.get("x-api-key") || "";
+    const token = secretHeader.trim() || authHeader.replace(/^Bearer\s+/i, "").trim();
+
+    // Explicitly disallow KAPSO_API_KEY as incoming authentication secret
+    if (env.KAPSO_API_KEY && token === env.KAPSO_API_KEY) {
+      return jsonResponse(401, {
+        ok: false,
+        error: "KAPSO_API_KEY no está permitida como secreto de autenticación entrante. Configure y use KAPSO_ORDER_TOOL_SECRET.",
+        code: "INVALID_AUTH_KEY"
+      });
+    }
+
+    const expectedToolSecret = env.KAPSO_ORDER_TOOL_SECRET;
+    const isToolAuthed = Boolean(
+      token && (
+        (expectedToolSecret && token === expectedToolSecret) ||
+        (!expectedToolSecret && env.SESSION_SECRET && token === env.SESSION_SECRET)
+      )
+    );
+
+    let authenticatedUser: AuthenticatedUser | null = null;
+    if (!isToolAuthed) {
+      if (token) {
+        return jsonResponse(401, {
+          ok: false,
+          error: "Secreto de autenticación inválido para ingesta de comprobantes",
+          code: "INVALID_SECRET"
+        });
+      }
+      authenticatedUser = await authenticate(request, env, fetchFn);
+      if (!authenticatedUser) {
+        return jsonResponse(401, {
+          ok: false,
+          error: "Autenticación requerida para ingesta de comprobantes (KAPSO_ORDER_TOOL_SECRET o sesión válida)",
+          code: "UNAUTHORIZED"
+        });
+      }
+    }
+
+    // 3. Supabase configuration & business scope
+    const sbConfig = getSupabaseConfig(env);
+
+    // 4. Parse body
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return jsonResponse(400, {
+        ok: false,
+        error: "JSON inválido en el cuerpo de la solicitud",
+        code: "INVALID_JSON"
+      });
+    }
+
+    // Business check (fail-closed)
+    if (body.business_id && body.business_id !== sbConfig.businessId) {
+      return jsonResponse(403, {
+        ok: false,
+        error: "El comprobante no pertenece al negocio configurado.",
+        code: "BUSINESS_ID_MISMATCH"
+      });
+    }
+
+    const fileName = String(body.file_name || body.fileName || "comprobante.jpg").trim();
+    const storagePath = String(body.storage_path || body.storagePath || "").trim();
+    const fileBase64 = body.file_base64 || body.fileBase64 ? String(body.file_base64 || body.fileBase64) : null;
+    const mediaUrl = body.media_url || body.mediaUrl ? String(body.media_url || body.mediaUrl).trim() : null;
+    const rawMime = String(body.mime_type || body.mimeType || "image/jpeg").toLowerCase().trim();
+    const declaredPaymentMethod = String(body.payment_method || body.paymentMethod || body.metadata?.payment_method || "").trim().toLowerCase();
+    const conversationId = body.conversation_id ? String(body.conversation_id).trim() : null;
+    const rawCustomerPhone = body.customer_phone ? String(body.customer_phone).trim() : null;
+    const cleanPhone = rawCustomerPhone ? rawCustomerPhone.replace(/[^\d+]/g, "") : null;
+
+    if (!fileName || (!storagePath && !fileBase64 && !mediaUrl)) {
+      return jsonResponse(400, {
+        ok: false,
+        error: "Se requiere file_name junto con file_base64, media_url o storage_path",
+        code: "MISSING_RECEIPT_DATA"
+      });
+    }
+
+    // Card receipt constraints: ONLY image MIME allowed, requires conversation or phone
+    const CARD_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
+    if (declaredPaymentMethod === "card") {
+      if (!CARD_IMAGE_MIMES.includes(rawMime)) {
+        return jsonResponse(415, {
+          ok: false,
+          error: "Los comprobantes para tarjeta deben ser imágenes (JPEG, PNG o WEBP). No se admiten archivos PDF ni formatos que no sean imagen.",
+          code: "CARD_RECEIPT_MUST_BE_IMAGE"
+        });
+      }
+      if (!conversationId && !cleanPhone) {
+        return jsonResponse(400, {
+          ok: false,
+          error: "Los comprobantes de tarjeta requieren conversation_id o customer_phone para su vinculación al pedido.",
+          code: "MISSING_CONVERSATION_OR_PHONE"
+        });
+      }
+    }
+
+    try {
+      const result = await ingestPaymentReceipt(
+        {
+          conversationId,
+          customerPhone: cleanPhone,
+          providerMessageId: body.provider_message_id ? String(body.provider_message_id) : null,
+          fileName,
+          fileSize: Number(body.file_size) || 0,
+          mimeType: rawMime,
+          storagePath: storagePath || null,
+          fileBase64,
+          mediaUrl,
+          kapsoApiKey: (env as any).KAPSO_API_KEY || null,
+          declaredAmountCents: body.declared_amount_cents !== undefined ? Number(body.declared_amount_cents) : null,
+          bankReference: body.bank_reference ? String(body.bank_reference).trim() : null,
+          paymentMethod: (declaredPaymentMethod === "card" || declaredPaymentMethod === "transfer") ? declaredPaymentMethod : null,
+          metadata: {
+            ...(body.metadata || {}),
+            ...(declaredPaymentMethod ? { payment_method: declaredPaymentMethod } : {}),
+            ...(cleanPhone ? { customer_phone: cleanPhone } : {})
+          }
+        },
+        sbConfig,
+        fetchFn
+      );
+
+      return jsonResponse(result.duplicate ? 200 : 201, {
+        ok: true,
+        receipt: result.receipt,
+        duplicate: result.duplicate,
+        association_state: result.associationState
+      });
+    } catch (err: any) {
+      if (err instanceof AppHttpError) {
+        return jsonResponse(err.status, {
+          ok: false,
+          error: err.message,
+          code: err.code
+        });
+      }
+      return jsonResponse(500, {
+        ok: false,
+        error: "Error interno al procesar el comprobante",
+        code: "RECEIPT_INGEST_ERROR"
+      });
+    }
+  }
+
   // --- KAPSO ORDER REGISTRATION ENDPOINT (Server-to-Server WhatsApp Integration) ---
   if (method === "POST" && (url.pathname === "/api/kapso/orders" || url.pathname === "/api/orders")) {
     // 1. Request size limit (max 50KB)
@@ -579,13 +743,14 @@ export async function handleRequest(
     if (paymentMethod === "card") {
       let candidateReceipts: any[] = [];
       const convId = String(body.conversation_id || "").trim();
+
       if (body.receipt_id) {
         candidateReceipts = await supabaseRequest<any[]>(
           "/rest/v1/crm_payment_receipts",
           {
             privileged: true,
             query: {
-              select: "id,order_id,storage_path,mime_type,status,conversation_id",
+              select: "id,order_id,storage_path,mime_type,status,conversation_id,metadata,business_id",
               business_id: "eq." + sbConfig.businessId,
               id: "eq." + body.receipt_id,
               limit: "1"
@@ -594,49 +759,104 @@ export async function handleRequest(
           sbConfig,
           fetchFn
         ).catch(() => []);
-      } else if (convId) {
+
+        if (!candidateReceipts || candidateReceipts.length === 0) {
+          return jsonResponse(400, {
+            ok: false,
+            error: "El comprobante especificado (receipt_id) no existe o no pertenece a este negocio.",
+            code: "RECEIPT_NOT_FOUND"
+          });
+        }
+
+        const receipt = candidateReceipts[0];
+
+        // 1. Business check
+        if (receipt.business_id && receipt.business_id !== sbConfig.businessId) {
+          return jsonResponse(400, {
+            ok: false,
+            error: "El comprobante no pertenece a este negocio.",
+            code: "RECEIPT_BUSINESS_MISMATCH"
+          });
+        }
+
+        // 2. Validate conversation and phone ownership
+        const receiptConvId = String(receipt.conversation_id || "").trim();
+        const receiptPhone = String(receipt.metadata?.customer_phone || "").replace(/[^\d+]/g, "");
+        const sameConv = Boolean(receiptConvId && convId && receiptConvId === convId);
+        const samePhone = Boolean(receiptPhone && cleanPhone && (receiptPhone === cleanPhone || receiptPhone.replace(/\D/g, "") === cleanPhone.replace(/\D/g, "")));
+
+        if ((receiptConvId && convId && receiptConvId !== convId) || (receiptPhone && cleanPhone && !samePhone && !sameConv)) {
+          return jsonResponse(400, {
+            ok: false,
+            error: "El comprobante de tarjeta especificado pertenece a otra conversación o cliente.",
+            code: "RECEIPT_CONVERSATION_MISMATCH"
+          });
+        }
+
+        // 3. Reject transfer receipt for card payment
+        if (receipt.metadata?.payment_method === "transfer") {
+          return jsonResponse(400, {
+            ok: false,
+            error: "Un comprobante de transferencia no puede utilizarse para un pedido con tarjeta.",
+            code: "INVALID_RECEIPT_TYPE"
+          });
+        }
+
+        // 4. Must be image MIME
+        const mime = String(receipt.mime_type || "").toLowerCase();
+        if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) {
+          return jsonResponse(400, {
+            ok: false,
+            error: "El comprobante para tarjeta debe ser una imagen válida (JPEG, PNG o WEBP).",
+            code: "INVALID_RECEIPT_MIME"
+          });
+        }
+
+        associatedReceiptId = receipt.id;
+      } else {
+        // Query candidate receipts for this conversation or phone
+        let queryParams: Record<string, string> = {
+          select: "id,order_id,storage_path,mime_type,status,conversation_id,metadata,created_at",
+          business_id: "eq." + sbConfig.businessId,
+          order: "created_at.desc",
+          limit: "10"
+        };
+        if (convId) {
+          queryParams.conversation_id = "eq." + convId;
+        }
+
         const receipts = await supabaseRequest<any[]>(
           "/rest/v1/crm_payment_receipts",
           {
             privileged: true,
-            query: {
-              select: "id,order_id,storage_path,mime_type,status,conversation_id,created_at",
-              business_id: "eq." + sbConfig.businessId,
-              conversation_id: "eq." + convId,
-              order: "created_at.desc",
-              limit: "5"
-            }
+            query: queryParams
           },
           sbConfig,
           fetchFn
         ).catch(() => []);
-        candidateReceipts = receipts || [];
-      } else if (body.receipt_storage_path) {
-        candidateReceipts = await supabaseRequest<any[]>(
-          "/rest/v1/crm_payment_receipts",
-          {
-            privileged: true,
-            query: {
-              select: "id,order_id,storage_path,mime_type,status",
-              business_id: "eq." + sbConfig.businessId,
-              storage_path: "eq." + body.receipt_storage_path,
-              limit: "1"
-            }
-          },
-          sbConfig,
-          fetchFn
-        ).catch(() => []);
-      }
 
-      if (!candidateReceipts || candidateReceipts.length === 0) {
-        return jsonResponse(400, {
-          ok: false,
-          error: "Para pago con tarjeta se requiere un comprobante de imagen recibido y asociado previamente en la conversación. Sin comprobante no se puede registrar el pedido.",
-          code: "MISSING_CARD_PAYMENT_RECEIPT"
+        // Filter valid card receipts:
+        // - Must be image MIME
+        // - Must NOT be marked as transfer
+        // - Must match phone if customer_phone is recorded on receipt
+        const validReceipts = (receipts || []).filter(r => {
+          const isImage = ["image/jpeg", "image/png", "image/webp"].includes(String(r.mime_type || "").toLowerCase());
+          const isTransfer = r.metadata?.payment_method === "transfer";
+          const rPhone = String(r.metadata?.customer_phone || "").replace(/[^\d+]/g, "");
+          const matchPhone = !rPhone || !cleanPhone || (rPhone === cleanPhone || rPhone.replace(/\D/g, "") === cleanPhone.replace(/\D/g, ""));
+          return isImage && !isTransfer && matchPhone;
         });
-      }
 
-      associatedReceiptId = candidateReceipts[0].id;
+        if (validReceipts.length === 0) {
+          return jsonResponse(400, {
+            ok: false,
+            error: "Para pago con tarjeta se requiere un comprobante de imagen recibido y asociado previamente en la conversación. Sin comprobante no se puede registrar el pedido.",
+            code: "MISSING_CARD_PAYMENT_RECEIPT"
+          });
+        }
+
+        associatedReceiptId = validReceipts[0].id;
+      }
     }
 
     // 9. Items catalog validation and price calculation
@@ -1182,50 +1402,6 @@ export async function handleRequest(
     };
 
     return jsonResponse(200, { ok: true, order_status: "dispatched", notice: outboundCustomerNotice });
-  }
-
-  // POST /api/receipts/ingest (Recepción de comprobantes con descarga segura, Storage privado y asociación inequívoca)
-  if (method === "POST" && url.pathname === "/api/receipts/ingest") {
-    const body = await request.json().catch(() => null);
-    if (!body || typeof body !== "object") {
-      return jsonResponse(400, { error: "JSON inválido" });
-    }
-
-    const fileName = String(body.file_name || body.fileName || "comprobante.jpg").trim();
-    const storagePath = String(body.storage_path || body.storagePath || "").trim();
-    const fileBase64 = body.file_base64 || body.fileBase64 ? String(body.file_base64 || body.fileBase64) : null;
-    const mediaUrl = body.media_url || body.mediaUrl ? String(body.media_url || body.mediaUrl).trim() : null;
-
-    if (!fileName || (!storagePath && !fileBase64 && !mediaUrl)) {
-      return jsonResponse(400, { error: "Se requiere file_name junto con file_base64, media_url o storage_path" });
-    }
-
-    const result = await ingestPaymentReceipt(
-      {
-        conversationId: body.conversation_id ? String(body.conversation_id) : null,
-        customerPhone: body.customer_phone ? String(body.customer_phone) : null,
-        providerMessageId: body.provider_message_id ? String(body.provider_message_id) : null,
-        fileName,
-        fileSize: Number(body.file_size) || 0,
-        mimeType: String(body.mime_type || "image/jpeg"),
-        storagePath: storagePath || null,
-        fileBase64,
-        mediaUrl,
-        kapsoApiKey: (env as any).KAPSO_API_KEY || null,
-        declaredAmountCents: body.declared_amount_cents !== undefined ? Number(body.declared_amount_cents) : null,
-        bankReference: body.bank_reference ? String(body.bank_reference).trim() : null,
-        metadata: body.metadata || {}
-      },
-      sbConfig,
-      fetchFn
-    );
-
-    return jsonResponse(result.duplicate ? 200 : 201, {
-      ok: true,
-      receipt: result.receipt,
-      duplicate: result.duplicate,
-      association_state: result.associationState
-    });
   }
 
   // POST /api/orders/:id/receipt

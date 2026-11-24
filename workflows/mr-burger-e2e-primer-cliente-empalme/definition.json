@@ -166,12 +166,16 @@
                     "type": "string"
                   },
                   "payment_method": {
-                    "description": "Método de pago: 'cash' para efectivo o 'transfer' para transferencia bancaria.",
+                    "description": "Método de pago: 'cash' para efectivo, 'transfer' para transferencia o 'card' para tarjeta.",
                     "enum": [
                       "cash",
                       "transfer",
                       "card"
                     ],
+                    "type": "string"
+                  },
+                  "receipt_id": {
+                    "description": "ID del comprobante de imagen recibido en la conversación (opcional; el backend lo resuelve automáticamente si ya se recibió una imagen).",
                     "type": "string"
                   }
                 },
