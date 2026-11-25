@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Env, DbSessionRow } from "../src/types.ts";
 import { handleRequest } from "../src/handler.ts";
 import { createSessionCookieValue } from "../src/session.ts";
-import { getOrders, getOrderDetails, updateOrderStatus } from "../src/supabase.ts";
+import { getOrders, getOrderDetails, updateOrderStatus, toDeterministicUuid } from "../src/supabase.ts";
 
 const mockSecret = ["mock", "secret", "32", "bytes", "length"].join("-");
 const mockServiceKey = ["mock", "service", "key", "length", "twenty"].join("-");
@@ -3367,4 +3367,217 @@ test("70. Ingesta de comprobante con business_id ajeno es rechazado fail-closed 
   const data = (await res.json()) as any;
   assert.equal(data.ok, false);
   assert.equal(data.code, "BUSINESS_ID_MISMATCH");
+});
+
+test("71. Regresión fallo real: Pedido con payload del incidente (1 Tocino, 1 Favorita, 1 Papas sazonadas, pickup, cash) no genera 22P02 y se registra correctamente", async () => {
+  const dbOrders: any[] = [];
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      // Simula verificación estricta de Postgres: si confirmation_key no es UUID, lanza 22P02
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        if (!UUID_REGEX.test(body.confirmation_key)) {
+          return new Response(
+            JSON.stringify({
+              code: "22P02",
+              message: `invalid input syntax for type uuid: "${body.confirmation_key}"`
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        // Simula verificación de columna inexistente: si envía provider_message_id, Postgres rechaza con 42703
+        if ("provider_message_id" in body && body.provider_message_id !== undefined) {
+          return new Response(
+            JSON.stringify({
+              code: "42703",
+              message: "column orders.provider_message_id does not exist"
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+
+      // Query check por confirmation_key
+      const matchKey = u.match(/confirmation_key=eq.([^&]+)/);
+      if (matchKey) {
+        const keyVal = decodeURIComponent(matchKey[1]);
+        if (!UUID_REGEX.test(keyVal)) {
+          return new Response(
+            JSON.stringify({
+              code: "22P02",
+              message: `invalid input syntax for type uuid: "${keyVal}"`
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        const found = dbOrders.filter(o => o.confirmation_key === keyVal);
+        return new Response(JSON.stringify(found), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ id: "mock" }]), { status: 200 });
+  };
+
+  // Payload exacto del incidente real en Kapso
+  const incidentPayload = {
+    items: [
+      { product: "Tocino", quantity: 1 },
+      { product: "Favorita", quantity: 1 },
+      { product: "Papas sazonadas", quantity: 1 }
+    ],
+    fulfillment: "pickup",
+    payment_method: "cash",
+    customer_phone: "+5216623357058",
+    conversation_id: "conv-incident-5216623357058",
+    idempotency_key: "ord_5216623357058_tocinox1_favoritax1_papas-sazonadasx1_pickup"
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify(incidentPayload)
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, true);
+  assert.equal(data.duplicate, false);
+  assert.ok(data.folio.startsWith("#MB-"));
+  assert.equal(data.fulfillment, "pickup");
+  assert.equal(data.payment_status, "pending");
+  // Total: Tocino ($135) + Favorita ($135) + Papas sazonadas ($80) = $350 (35000 cents), shipping $0
+  assert.equal(data.subtotal_cents, 35000);
+  assert.equal(data.shipping_cents, 0);
+  assert.equal(data.total_cents, 35000);
+  assert.equal(data.total_formatted, "$350");
+
+  // Verificar que el registro en DB tiene confirmation_key como UUID válido y NO contiene provider_message_id
+  assert.equal(dbOrders.length, 1);
+  assert.ok(UUID_REGEX.test(dbOrders[0].confirmation_key));
+  assert.equal("provider_message_id" in dbOrders[0], false);
+});
+
+test("72. Idempotencia ante reintentos con clave determinista de texto devuelve duplicate: true sin crear pedido duplicado", async () => {
+  const dbOrders: any[] = [];
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        if (!UUID_REGEX.test(body.confirmation_key)) {
+          return new Response(JSON.stringify({ code: "22P02", message: "invalid input syntax for type uuid" }), { status: 400 });
+        }
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+
+      const matchKey = u.match(/confirmation_key=eq.([^&]+)/);
+      if (matchKey) {
+        const keyVal = decodeURIComponent(matchKey[1]);
+        const found = dbOrders.filter(o => o.confirmation_key === keyVal);
+        return new Response(JSON.stringify(found), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ id: "mock" }]), { status: 200 });
+  };
+
+  const payload = {
+    items: [
+      { product: "Tocino", quantity: 1 },
+      { product: "Favorita", quantity: 1 },
+      { product: "Papas sazonadas", quantity: 1 }
+    ],
+    fulfillment: "pickup",
+    payment_method: "cash",
+    customer_phone: "+5216623357058",
+    idempotency_key: "ord_5216623357058_tocinox1_favoritax1_papas-sazonadasx1_pickup"
+  };
+
+  // Intento 1
+  const req1 = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify(payload)
+  });
+  const res1 = await handleRequest(req1, testEnv, mockFetch);
+  assert.equal(res1.status, 200);
+  const data1 = (await res1.json()) as any;
+  assert.equal(data1.duplicate, false);
+  assert.equal(dbOrders.length, 1);
+
+  // Intento 2 (Reintento de Kapso)
+  const req2 = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify(payload)
+  });
+  const res2 = await handleRequest(req2, testEnv, mockFetch);
+  assert.equal(res2.status, 200);
+  const data2 = (await res2.json()) as any;
+  assert.equal(data2.duplicate, true);
+  assert.equal(data2.folio, data1.folio);
+  assert.equal(data2.total_cents, data1.total_cents);
+  // La DB sigue teniendo exactamente 1 registro
+  assert.equal(dbOrders.length, 1);
+});
+
+test("73. toDeterministicUuid genera UUIDs conformes a RFC 4122 v5 de forma determinista y preserva UUIDs existentes", async () => {
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const incidentKey = "ord_5216623357058_tocinox1_favoritax1_papas-sazonadasx1_pickup";
+
+  const uuid1 = await toDeterministicUuid(incidentKey);
+  const uuid2 = await toDeterministicUuid(incidentKey);
+
+  assert.equal(uuid1, uuid2, "Debe ser estrictamente determinista entre múltiples ejecuciones");
+  assert.ok(UUID_REGEX.test(uuid1), "Debe cumplir formato canónico de UUID");
+  // Verificar RFC 4122 versión 5 y variante
+  assert.equal(uuid1.charAt(14), "5", "Debe tener versión 5 (SHA-based)");
+  assert.ok(["8", "9", "a", "b"].includes(uuid1.charAt(19).toLowerCase()), "Debe tener variante RFC 4122");
+
+  // Si ya es un UUID válido, debe preservarlo intacto
+  const existingUuid = "44444444-4444-4444-8444-444444444444";
+  const preserved = await toDeterministicUuid(existingUuid);
+  assert.equal(preserved, existingUuid);
+});
+
+test("74. Fallo de base de datos nunca reporta pedido confirmado (retorna 502 SUPABASE_ERROR)", async () => {
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      return new Response(JSON.stringify({ code: "500", message: "Supabase connection error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify([{ id: "mock" }]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221112233"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 502);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, undefined);
+  assert.equal(data.code, "SUPABASE_ERROR");
+  assert.ok(data.error.includes("Error interno del CRM"));
 });

@@ -1440,13 +1440,35 @@ export interface CreateKapsoOrderParams {
   associatedReceiptId?: string | null;
 }
 
+/**
+ * Converts any arbitrary text string (e.g. an idempotency key) into a deterministic RFC 4122 v5 UUID.
+ * If the input is already a valid UUID string, returns it normalized.
+ */
+export async function toDeterministicUuid(input: string): Promise<string> {
+  const trimmed = String(input || "").trim().toLowerCase();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    return trimmed;
+  }
+  const enc = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", enc.encode("solidbit:order:idempotency:" + trimmed));
+  const bytes = new Uint8Array(hashBuffer);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50; // RFC 4122 version 5
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(bytes.slice(0, 16)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 export async function createKapsoOrder(
   params: CreateKapsoOrderParams,
   config: SupabaseConfig,
   fetchFn: typeof fetch = fetch
 ): Promise<{ order: any; duplicate: boolean }> {
-  // 1. Check exact confirmation_key idempotency
-  if (params.confirmationKey) {
+  const confirmationUuid = params.confirmationKey
+    ? await toDeterministicUuid(params.confirmationKey)
+    : crypto.randomUUID();
+
+  // 1. Check exact confirmation_key idempotency using valid UUID
+  if (confirmationUuid) {
     const existingByKey = await supabaseRequest<any[]>(
       "/rest/v1/orders",
       {
@@ -1454,7 +1476,7 @@ export async function createKapsoOrder(
         query: {
           select: "*",
           business_id: "eq." + config.businessId,
-          confirmation_key: "eq." + params.confirmationKey,
+          confirmation_key: "eq." + confirmationUuid,
           limit: "1"
         }
       },
@@ -1507,8 +1529,7 @@ export async function createKapsoOrder(
       body: {
         id: orderId,
         business_id: config.businessId,
-        confirmation_key: params.confirmationKey,
-        provider_message_id: params.providerMessageId || null,
+        confirmation_key: confirmationUuid,
         conversation_id: params.conversationId || null,
         customer_ref: params.customerPhone,
         items: params.items,
