@@ -53,15 +53,22 @@ function handleSessionExpired(noticeText) {
   closeEditProductModal();
 
   // Reset role-restricted navigation visibility
-  const btnOverview = document.querySelector('button[data-view="overview"]');
-  const btnMenu = document.querySelector('button[data-view="menu"]');
-  if (btnOverview) btnOverview.hidden = false;
-  if (btnMenu) btnMenu.hidden = false;
+  document.querySelectorAll('button[data-view="overview"]').forEach(btn => {
+    btn.hidden = false;
+    btn.removeAttribute("hidden");
+    btn.style.display = "";
+  });
+  document.querySelectorAll('button[data-view="menu"]').forEach(btn => {
+    btn.hidden = false;
+    btn.removeAttribute("hidden");
+    btn.style.display = "";
+  });
 
   if ($("session-loading")) $("session-loading").hidden = true;
   $("login-panel").hidden = false;
   $("dashboard").hidden = true;
   $("user").textContent = "";
+  if ($("user-sidebar")) $("user-sidebar").textContent = "";
 
   const expiredBox = $("session-expired-notice");
   if (expiredBox) {
@@ -374,18 +381,26 @@ document.querySelectorAll("[data-view]").forEach(btn => {
 
 function applyRolePermissions(role) {
   const isOwnerOrManager = role === "owner" || role === "manager";
-  const btnOverview = document.querySelector('button[data-view="overview"]');
-  const btnMenu = document.querySelector('button[data-view="menu"]');
-  if (btnOverview) {
-    btnOverview.hidden = !isOwnerOrManager;
-    if (!isOwnerOrManager) btnOverview.setAttribute("hidden", "");
-    else btnOverview.removeAttribute("hidden");
-  }
-  if (btnMenu) {
-    btnMenu.hidden = !isOwnerOrManager;
-    if (!isOwnerOrManager) btnMenu.setAttribute("hidden", "");
-    else btnMenu.removeAttribute("hidden");
-  }
+  document.querySelectorAll('button[data-view="overview"]').forEach(btn => {
+    btn.hidden = !isOwnerOrManager;
+    if (!isOwnerOrManager) {
+      btn.setAttribute("hidden", "");
+      btn.style.display = "none";
+    } else {
+      btn.removeAttribute("hidden");
+      btn.style.display = "";
+    }
+  });
+  document.querySelectorAll('button[data-view="menu"]').forEach(btn => {
+    btn.hidden = !isOwnerOrManager;
+    if (!isOwnerOrManager) {
+      btn.setAttribute("hidden", "");
+      btn.style.display = "none";
+    } else {
+      btn.removeAttribute("hidden");
+      btn.style.display = "";
+    }
+  });
 }
 
 async function change(name, param) {
@@ -1161,7 +1176,9 @@ async function checkSession() {
 
     // Display user and role cleanly
     const roleLabels = { owner: "Propietario", manager: "Gerente", operator: "Operador", worker: "Operador" };
-    $("user").textContent = `${user.email} (${roleLabels[user.role] || user.role})`;
+    const userDisplay = `${user.email} (${roleLabels[user.role] || user.role})`;
+    $("user").textContent = userDisplay;
+    if ($("user-sidebar")) $("user-sidebar").textContent = userDisplay;
 
     applyRolePermissions(user.role);
 
@@ -1191,14 +1208,19 @@ if ($("login-form")) {
   };
 }
 
+const handleLogout = async () => {
+  try {
+    await api("/api/logout", "POST");
+  } catch {}
+  handleSessionExpired();
+  flash("Has cerrado sesión correctamente.", "success");
+};
+
 if ($("logout")) {
-  $("logout").onclick = async () => {
-    try {
-      await api("/api/logout", "POST");
-    } catch {}
-    handleSessionExpired();
-    flash("Has cerrado sesión correctamente.", "success");
-  };
+  $("logout").onclick = handleLogout;
+}
+if ($("logout-mobile")) {
+  $("logout-mobile").onclick = handleLogout;
 }
 
 // Start on load

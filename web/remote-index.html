@@ -2,349 +2,413 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mr. Burger · Centro Operativo y Atención (Solid Bit)</title>
   <link rel="icon" type="image/svg+xml" href="/brand/solidbit-favicon.svg">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<main class="container">
-<header>
-  <div class="brand-lockup">
-    <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="sb-header-logo">
-    <div class="brand-text">
-      <h1>Mr. Burger</h1>
-      <p class="muted">Centro Operativo y Atención al Cliente</p>
+<div class="crm-shell">
+
+  <!-- Mensaje flash global -->
+  <div id="flash-message" class="flash" hidden aria-live="polite"></div>
+
+  <!-- Verificación de sesión -->
+  <section id="session-loading" class="card">
+    <div class="skeleton-line" style="width:50%;margin:0 auto 10px;"></div>
+    <p class="muted" style="text-align:center;margin:0;">Verificando credenciales de acceso…</p>
+  </section>
+
+  <!-- Panel de inicio de sesión (Gate 2B - Smart WHA Style) -->
+  <section id="login-panel" class="card" hidden>
+    <div class="login-header">
+      <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="sb-login-logo">
+      <h2>Ingreso al Sistema</h2>
+      <p class="muted">Acceso autorizado para personal de Mr. Burger</p>
     </div>
-  </div>
-  <div class="header-actions">
-    <button id="sound-toggle" class="sound-toggle-btn" title="Activar/Silenciar sonidos">
-      <span id="sound-icon">🔊</span><span id="sound-label">Sonido</span>
-    </button>
-    <button id="notif-bell" class="bell-btn" aria-label="Centro de notificaciones" title="Notificaciones">
-      <span>🔔</span>
-      <span id="notif-count" class="bell-badge" hidden>0</span>
-    </button>
-    <span id="user" class="user-badge"></span>
-  </div>
+    <div id="session-expired-notice" class="warning" hidden></div>
+    <form id="login-form">
+      <label>Correo electrónico
+        <input name="email" type="email" autocomplete="username" placeholder="usuario@mrburger.test" required>
+      </label>
+      <label>Contraseña
+        <input name="password" type="password" autocomplete="current-password" placeholder="••••••••••••" required>
+      </label>
+      <button type="submit" class="btn-primary login-btn">Iniciar Sesión</button>
+    </form>
+  </section>
 
-  <!-- Notification Dropdown Panel -->
-  <div id="notif-panel" class="notif-dropdown" hidden>
-    <div class="notif-header">
-      <h3>Notificaciones de Operación</h3>
-      <div class="notif-header-btns">
-        <button id="notif-mark-all" class="btn-secondary">Marcar leídas</button>
-        <button id="notif-close" class="btn-secondary">Cerrar</button>
-      </div>
-    </div>
-    <div id="notif-list" class="notif-body">
-      <div class="placeholder">Cargando notificaciones…</div>
-    </div>
-    <div class="sound-test-box">
-      <p>Probar alertas audibles:</p>
-      <div class="sound-test-grid">
-        <button type="button" data-sound="human_handoff">A. Atención requerida</button>
-        <button type="button" data-sound="transfer_validation">B. Comprobante de pago</button>
-        <button type="button" data-sound="order_confirmed">C. Pedido nuevo</button>
-        <button type="button" data-sound="operational_incident">D. Incidencia</button>
-      </div>
-    </div>
-  </div>
-</header>
+  <!-- Panel Principal (Dashboard Shell - Smart WHA Standard) -->
+  <div id="dashboard" class="dashboard-shell" hidden>
 
-<div id="flash-message" class="flash" hidden aria-live="polite"></div>
-
-<!-- Verificación de sesión -->
-<section id="session-loading" class="card">
-  <div class="skeleton-line" style="width:50%;margin:0 auto 10px;"></div>
-  <p class="muted" style="text-align:center;margin:0;">Verificando credenciales de acceso…</p>
-</section>
-
-<!-- Panel de inicio de sesión -->
-<section id="login-panel" class="card" hidden>
-  <div class="login-header">
-    <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="sb-login-logo">
-    <h2>Ingreso al Sistema</h2>
-    <p class="muted">Acceso autorizado para personal de Mr. Burger</p>
-  </div>
-  <div id="session-expired-notice" class="warning" hidden></div>
-  <form id="login-form">
-    <label>Correo electrónico
-      <input name="email" type="email" autocomplete="username" placeholder="usuario@mrburger.test" required>
-    </label>
-    <label>Contraseña
-      <input name="password" type="password" autocomplete="current-password" placeholder="••••••••••••" required>
-    </label>
-    <button type="submit" class="btn-primary" style="width:100%;margin-top:12px;">Iniciar Sesión</button>
-  </form>
-</section>
-
-<!-- Panel Principal (Dashboard) -->
-<section id="dashboard" hidden>
-  <!-- Barra de navegación en orden estricto de negocio -->
-  <nav aria-label="Secciones del Centro Operativo">
-    <button data-view="handoff" class="active">💬 Atención humana</button>
-    <button data-view="overview">📊 Resumen</button>
-    <button data-view="orders">📦 Gestión de pedidos</button>
-    <button data-view="menu">🍔 Menú</button>
-    <button id="logout" class="btn-secondary logout-btn">Cerrar sesión</button>
-  </nav>
-
-  <!-- 1. SECCIÓN: ATENCIÓN HUMANA (PANTALLA INICIAL) -->
-  <div id="handoff-view" class="card">
-    <div class="section-header">
-      <div>
-        <h2>Atención humana</h2>
-        <p class="muted">Bandeja de conversaciones de clientes derivadas para soporte directo</p>
-      </div>
-      <button id="btn-refresh-inbox" class="btn-secondary">Actualizar bandeja</button>
-    </div>
-
-    <div id="handoff-target-banner" class="handoff-target-banner" hidden>
-      <div class="banner-content">
-        <span class="banner-icon">🎯</span>
-        <div class="banner-text">
-          <strong>Conversación seleccionada desde pedidos:</strong>
-          <span id="handoff-target-id" class="target-id"></span>
+    <!-- Barra lateral para escritorio (Desktop Sidebar) -->
+    <aside class="sidebar" aria-label="Navegación de control">
+      <div class="brand">
+        <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="sidebar-logo">
+        <div class="brand-info">
+          <div class="brand-title">Mr. Burger</div>
+          <div class="brand-sub">Empalme, Sonora</div>
         </div>
       </div>
-      <button id="handoff-target-clear" class="btn-secondary btn-sm" title="Mostrar todas las conversaciones">Ver todas</button>
-    </div>
 
-    <!-- Skeletons para Atención humana -->
-    <div id="handoff-skeleton" class="view-skeleton" hidden>
-      <div class="skeleton-line" style="height:24px;width:30%;margin-bottom:14px;"></div>
-      <div class="skeleton-box" style="height:480px;border-radius:12px;"></div>
-    </div>
-
-    <div id="handoff-error" class="error-banner" hidden>
-      <p id="handoff-error-msg">No se pudo cargar la bandeja de atención.</p>
-      <button class="btn-retry" onclick="loaders.handoff()">Reintentar</button>
-    </div>
-
-    <div id="inbox-container" class="inbox-frame-wrap">
-      <div id="inbox-placeholder" class="empty-state">
-        <p class="empty-title">Conectando con la bandeja de mensajes…</p>
+      <div class="status-badge">
+        <span class="status-dot"></span>
+        <span>Operación Activa</span>
       </div>
-      <iframe id="inbox-frame" src="about:blank" title="Bandeja de atención al cliente" loading="lazy"></iframe>
-    </div>
-  </div>
 
-  <!-- 2. SECCIÓN: RESUMEN -->
-  <div id="overview-view" class="card" hidden>
-    <div class="section-header">
-      <div>
-        <h2>Resumen del Día</h2>
-        <p class="muted">Indicadores en tiempo real de pedidos, actividad y catálogo</p>
-      </div>
-      <button id="btn-refresh-overview" class="btn-secondary">Actualizar cifras</button>
-    </div>
+      <div class="nav-group-title">MÓDULOS OPERATIVOS</div>
+      <nav class="sidebar-nav" aria-label="Secciones del Centro Operativo">
+        <button data-view="handoff" class="nav-item active"><span class="nav-icon">💬</span> <span>Atención humana</span></button>
+        <button data-view="overview" class="nav-item"><span class="nav-icon">📊</span> <span>Resumen</span></button>
+        <button data-view="orders" class="nav-item"><span class="nav-icon">📦</span> <span>Gestión de pedidos</span></button>
+        <button data-view="menu" class="nav-item"><span class="nav-icon">🍔</span> <span>Menú</span></button>
+      </nav>
 
-    <!-- Skeletons para Resumen -->
-    <div id="overview-skeleton" class="view-skeleton" hidden>
-      <div class="metrics-grid">
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-      </div>
-    </div>
-
-    <div id="overview-error" class="error-banner" hidden>
-      <p id="overview-error-msg">No se pudieron cargar los indicadores.</p>
-      <button class="btn-retry" onclick="loaders.overview()">Reintentar</button>
-    </div>
-
-    <div id="metrics" class="metrics-grid"></div>
-
-    <div class="recent-orders-block" style="margin-top:24px;">
-      <h3>Últimas confirmaciones</h3>
-      <div id="overview-recent-orders"></div>
-    </div>
-  </div>
-
-  <!-- 3. SECCIÓN: GESTIÓN DE PEDIDOS -->
-  <div id="orders-view" class="card" hidden>
-    <div class="section-header">
-      <div>
-        <h2>Gestión de Pedidos</h2>
-        <p class="muted">Flujo operativo desde recepción y cocina hasta despacho o entrega</p>
-      </div>
-      <div style="display:flex;gap:8px;">
-        <button id="btn-refresh-orders" class="btn-secondary">Actualizar pedidos</button>
-      </div>
-    </div>
-
-    <div class="orders-toolbar">
-      <input id="orders-search" type="search" autocomplete="off" aria-label="Buscar pedidos"
-             placeholder="🔍 Buscar por folio (#MB-...), teléfono o cliente…" class="search-input">
-      <div class="orders-filters" role="group" aria-label="Filtro de pedidos">
-        <button data-order-filter="all" class="btn-filter active">Todos los pedidos</button>
-        <button data-order-filter="pending_payment" class="btn-filter">Por validar pago</button>
-        <button data-order-filter="kitchen" class="btn-filter">En cocina</button>
-        <button data-order-filter="ready" class="btn-filter">Listos</button>
-      </div>
-    </div>
-
-    <!-- Skeletons para Gestión de pedidos -->
-    <div id="orders-skeleton" class="view-skeleton" hidden>
-      <div class="skeleton-row"></div>
-      <div class="skeleton-row"></div>
-      <div class="skeleton-row"></div>
-      <div class="skeleton-row"></div>
-    </div>
-
-    <div id="orders-error" class="error-banner" hidden>
-      <p id="orders-error-msg">No se pudo cargar la lista de pedidos.</p>
-      <button class="btn-retry" onclick="loaders.orders()">Reintentar</button>
-    </div>
-
-    <div id="orders-list" class="orders-container"></div>
-  </div>
-
-  <!-- 4. SECCIÓN: MENÚ -->
-  <div id="menu-view" class="card" hidden>
-    <div class="section-header">
-      <div>
-        <h2>Menú y Productos</h2>
-        <p class="muted">Administra los productos disponibles. Los cambios se sincronizan de inmediato con el bot.</p>
-      </div>
-      <button id="btn-toggle-add-product" class="btn-primary">+ Agregar Producto</button>
-    </div>
-
-    <!-- Formulario para agregar producto (desplegable) -->
-    <div id="add-product-panel" class="form-card" hidden>
-      <h3>Nuevo Producto en el Menú</h3>
-      <form id="menu-form">
-        <div class="form-grid">
-          <label>Código SKU
-            <input name="sku" type="text" placeholder="ej. clasica-doble" required maxlength="80">
-          </label>
-          <label>Categoría
-            <select name="category" required>
-              <option value="Hamburguesas">Hamburguesas</option>
-              <option value="Combos">Combos</option>
-              <option value="Complementos">Complementos</option>
-              <option value="Bebidas">Bebidas</option>
-              <option value="Postres">Postres</option>
-            </select>
-          </label>
-          <label>Nombre del producto
-            <input name="name" type="text" placeholder="ej. Clásica Doble con Queso" required maxlength="200">
-          </label>
-          <label>Precio en pesos ($ MXN)
-            <input name="price" type="number" step="1" min="0" placeholder="135" required>
-          </label>
-        </div>
-        <label>Descripción detallada
-          <textarea name="description" rows="2" placeholder="Ingredientes, carne 100% res, aderezos..."></textarea>
-        </label>
-        <div class="form-actions-row">
-          <label class="checkbox-label">
-            <input name="active" type="checkbox" checked>
-            <span>Activo para venta inmediata en WhatsApp</span>
-          </label>
-          <div class="form-actions-buttons">
-            <button type="button" id="btn-cancel-add-product" class="btn-secondary">Cancelar</button>
-            <button type="submit" class="btn-primary">Guardar en el Menú</button>
+      <div class="sidebar-footer">
+        <div class="user-profile-card">
+          <span class="user-avatar">👤</span>
+          <div class="user-profile-info">
+            <span id="user-sidebar" class="user-sidebar-name"></span>
           </div>
         </div>
-      </form>
-    </div>
-
-    <!-- Skeletons para Menú -->
-    <div id="menu-skeleton" class="view-skeleton" hidden>
-      <div class="skeleton-line" style="width:20%;margin-bottom:12px;"></div>
-      <div class="menu-grid">
-        <div class="skeleton-card" style="height:140px;"></div>
-        <div class="skeleton-card" style="height:140px;"></div>
-        <div class="skeleton-card" style="height:140px;"></div>
+        <button id="logout" class="btn-sidebar-logout" title="Cerrar sesión">
+          <span>🚪</span> <span>Cerrar sesión</span>
+        </button>
       </div>
-    </div>
+    </aside>
 
-    <div id="menu-error" class="error-banner" hidden>
-      <p id="menu-error-msg">No se pudo cargar el catálogo del menú.</p>
-      <button class="btn-retry" onclick="loaders.menu()">Reintentar</button>
-    </div>
-
-    <div id="menu-categories" class="menu-container"></div>
-  </div>
-</section>
-
-<!-- Modal para adjuntar o inspeccionar comprobante de transferencia -->
-<div id="modal-receipt" class="modal-backdrop" style="display: none;" hidden>
-  <div class="modal-card">
-    <div class="modal-header">
-      <h3 id="receipt-modal-title">Comprobante de Transferencia</h3>
-      <button type="button" id="modal-receipt-close" class="btn-close" aria-label="Cerrar modal">×</button>
-    </div>
-    <div class="modal-body">
-      <div id="receipt-preview-container" class="receipt-preview-box"></div>
-      <div id="receipt-upload-form" class="receipt-upload-section">
-        <p class="muted">Selecciona el comprobante recibido para asociarlo a este pedido:</p>
-        <input type="file" id="receipt-file-input" accept="image/jpeg,image/png,image/webp,application/pdf">
-        <div style="margin-top:8px;">
-          <label>Referencia bancaria (opcional)
-            <input type="text" id="receipt-bank-ref" placeholder="ej. SPEI 883920">
-          </label>
+    <!-- Contenedor Principal (Main Area) -->
+    <main class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="topbar-brand-mobile">
+            <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="topbar-logo-mobile">
+            <span class="topbar-title-mobile">Mr. Burger</span>
+          </div>
+          <span class="tenant-badge">Empalme · WhatsApp CRM</span>
         </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" id="modal-receipt-cancel" class="btn-secondary">Cerrar</button>
-      <button type="button" id="modal-receipt-submit" class="btn-primary">Subir y Asociar Comprobante</button>
-    </div>
-  </div>
-</div>
 
-<!-- Modal para editar producto del menú -->
-<div id="modal-edit-product" class="modal-backdrop" style="display: none;" hidden>
-  <div class="modal-card">
-    <div class="modal-header">
-      <h3 id="edit-modal-title">Editar Producto del Menú</h3>
-      <button type="button" id="modal-edit-close" class="btn-close" aria-label="Cerrar modal">×</button>
-    </div>
-    <form id="edit-product-form">
+        <div class="header-actions">
+          <button id="sound-toggle" class="sound-toggle-btn" title="Activar/Silenciar sonidos">
+            <span id="sound-icon">🔊</span><span id="sound-label">Sonido</span>
+          </button>
+          <button id="notif-bell" class="bell-btn" aria-label="Centro de notificaciones" title="Notificaciones">
+            <span>🔔</span>
+            <span id="notif-count" class="bell-badge" hidden>0</span>
+          </button>
+          <span id="user" class="user-badge"></span>
+        </div>
+
+        <!-- Notification Dropdown Panel -->
+        <div id="notif-panel" class="notif-dropdown" hidden>
+          <div class="notif-header">
+            <h3>Notificaciones de Operación</h3>
+            <div class="notif-header-btns">
+              <button id="notif-mark-all" class="btn-secondary btn-xs">Marcar leídas</button>
+              <button id="notif-close" class="btn-secondary btn-xs">Cerrar</button>
+            </div>
+          </div>
+          <div id="notif-list" class="notif-body">
+            <div class="placeholder">Cargando notificaciones…</div>
+          </div>
+          <div class="sound-test-box">
+            <p>Probar alertas audibles:</p>
+            <div class="sound-test-grid">
+              <button type="button" data-sound="human_handoff">A. Atención requerida</button>
+              <button type="button" data-sound="transfer_validation">B. Comprobante de pago</button>
+              <button type="button" data-sound="order_confirmed">C. Pedido nuevo</button>
+              <button type="button" data-sound="operational_incident">D. Incidencia</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Vistas Operativas -->
+      <div class="views-container">
+
+        <!-- 1. SECCIÓN: ATENCIÓN HUMANA (PANTALLA INICIAL) -->
+        <div id="handoff-view" class="card">
+          <div class="section-header">
+            <div>
+              <h2>Atención humana</h2>
+              <p class="muted">Bandeja de conversaciones de clientes derivadas para soporte directo</p>
+            </div>
+            <button id="btn-refresh-inbox" class="btn-secondary">Actualizar bandeja</button>
+          </div>
+
+          <div id="handoff-target-banner" class="handoff-target-banner" hidden>
+            <div class="banner-content">
+              <span class="banner-icon">🎯</span>
+              <div class="banner-text">
+                <strong>Conversación seleccionada desde pedidos:</strong>
+                <span id="handoff-target-id" class="target-id"></span>
+              </div>
+            </div>
+            <button id="handoff-target-clear" class="btn-secondary btn-sm" title="Mostrar todas las conversaciones">Ver todas</button>
+          </div>
+
+          <!-- Skeletons para Atención humana -->
+          <div id="handoff-skeleton" class="view-skeleton" hidden>
+            <div class="skeleton-line" style="height:24px;width:30%;margin-bottom:14px;"></div>
+            <div class="skeleton-box" style="height:480px;border-radius:12px;"></div>
+          </div>
+
+          <div id="handoff-error" class="error-banner" hidden>
+            <p id="handoff-error-msg">No se pudo cargar la bandeja de atención.</p>
+            <button class="btn-retry" onclick="loaders.handoff()">Reintentar</button>
+          </div>
+
+          <div id="inbox-container" class="inbox-frame-wrap">
+            <div id="inbox-placeholder" class="empty-state">
+              <p class="empty-title">Conectando con la bandeja de mensajes…</p>
+            </div>
+            <iframe id="inbox-frame" src="about:blank" title="Bandeja de atención al cliente" loading="lazy"></iframe>
+          </div>
+        </div>
+
+        <!-- 2. SECCIÓN: RESUMEN -->
+        <div id="overview-view" class="card" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Resumen del Día</h2>
+              <p class="muted">Indicadores en tiempo real de pedidos, actividad y catálogo</p>
+            </div>
+            <button id="btn-refresh-overview" class="btn-secondary">Actualizar cifras</button>
+          </div>
+
+          <!-- Skeletons para Resumen -->
+          <div id="overview-skeleton" class="view-skeleton" hidden>
+            <div class="metrics-grid">
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+              <div class="skeleton-card"></div>
+            </div>
+          </div>
+
+          <div id="overview-error" class="error-banner" hidden>
+            <p id="overview-error-msg">No se pudieron cargar los indicadores.</p>
+            <button class="btn-retry" onclick="loaders.overview()">Reintentar</button>
+          </div>
+
+          <div id="metrics" class="metrics-grid"></div>
+
+          <div class="recent-orders-block" style="margin-top:24px;">
+            <h3>Últimas confirmaciones</h3>
+            <div id="overview-recent-orders"></div>
+          </div>
+        </div>
+
+        <!-- 3. SECCIÓN: GESTIÓN DE PEDIDOS -->
+        <div id="orders-view" class="card" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Gestión de Pedidos</h2>
+              <p class="muted">Flujo operativo desde recepción y cocina hasta despacho o entrega</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button id="btn-refresh-orders" class="btn-secondary">Actualizar pedidos</button>
+            </div>
+          </div>
+
+          <div class="orders-toolbar">
+            <input id="orders-search" type="search" autocomplete="off" aria-label="Buscar pedidos"
+                   placeholder="🔍 Buscar por folio (#MB-...), teléfono o cliente…" class="search-input">
+            <div class="orders-filters" role="group" aria-label="Filtro de pedidos">
+              <button data-order-filter="all" class="btn-filter active">Todos los pedidos</button>
+              <button data-order-filter="pending_payment" class="btn-filter">Por validar pago</button>
+              <button data-order-filter="kitchen" class="btn-filter">En cocina</button>
+              <button data-order-filter="ready" class="btn-filter">Listos</button>
+            </div>
+          </div>
+
+          <!-- Skeletons para Gestión de pedidos -->
+          <div id="orders-skeleton" class="view-skeleton" hidden>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+          </div>
+
+          <div id="orders-error" class="error-banner" hidden>
+            <p id="orders-error-msg">No se pudo cargar la lista de pedidos.</p>
+            <button class="btn-retry" onclick="loaders.orders()">Reintentar</button>
+          </div>
+
+          <div id="orders-list" class="orders-container"></div>
+        </div>
+
+        <!-- 4. SECCIÓN: MENÚ -->
+        <div id="menu-view" class="card" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Menú y Productos</h2>
+              <p class="muted">Administra los productos disponibles. Los cambios se sincronizan de inmediato con el bot.</p>
+            </div>
+            <button id="btn-toggle-add-product" class="btn-primary">+ Agregar Producto</button>
+          </div>
+
+          <!-- Formulario para agregar producto (desplegable) -->
+          <div id="add-product-panel" class="form-card" hidden>
+            <h3>Nuevo Producto en el Menú</h3>
+            <form id="menu-form">
+              <div class="form-grid">
+                <label>Código SKU
+                  <input name="sku" type="text" placeholder="ej. clasica-doble" required maxlength="80">
+                </label>
+                <label>Categoría
+                  <select name="category" required>
+                    <option value="Hamburguesas">Hamburguesas</option>
+                    <option value="Combos">Combos</option>
+                    <option value="Complementos">Complementos</option>
+                    <option value="Bebidas">Bebidas</option>
+                    <option value="Postres">Postres</option>
+                  </select>
+                </label>
+                <label>Nombre del producto
+                  <input name="name" type="text" placeholder="ej. Clásica Doble con Queso" required maxlength="200">
+                </label>
+                <label>Precio en pesos ($ MXN)
+                  <input name="price" type="number" step="1" min="0" placeholder="135" required>
+                </label>
+              </div>
+              <label>Descripción detallada
+                <textarea name="description" rows="2" placeholder="Ingredientes, carne 100% res, aderezos..."></textarea>
+              </label>
+              <div class="form-actions-row">
+                <label class="checkbox-label">
+                  <input name="active" type="checkbox" checked>
+                  <span>Activo para venta inmediata en WhatsApp</span>
+                </label>
+                <div class="form-actions-buttons">
+                  <button type="button" id="btn-cancel-add-product" class="btn-secondary">Cancelar</button>
+                  <button type="submit" class="btn-primary">Guardar en el Menú</button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <!-- Skeletons para Menú -->
+          <div id="menu-skeleton" class="view-skeleton" hidden>
+            <div class="skeleton-line" style="width:20%;margin-bottom:12px;"></div>
+            <div class="menu-grid">
+              <div class="skeleton-card" style="height:140px;"></div>
+              <div class="skeleton-card" style="height:140px;"></div>
+              <div class="skeleton-card" style="height:140px;"></div>
+            </div>
+          </div>
+
+          <div id="menu-error" class="error-banner" hidden>
+            <p id="menu-error-msg">No se pudo cargar el catálogo del menú.</p>
+            <button class="btn-retry" onclick="loaders.menu()">Reintentar</button>
+          </div>
+
+          <div id="menu-categories" class="menu-container"></div>
+        </div>
+
+      </div> <!-- /views-container -->
+    </main>
+
+    <!-- Barra de navegación inferior para móvil (Smart WHA Native Mobile Bar) -->
+    <nav class="mobile-bottom-nav" aria-label="Navegación móvil">
+      <button data-view="handoff" class="mobile-nav-btn active">
+        <span class="mobile-icon">💬</span>
+        <span>Inbox</span>
+      </button>
+      <button data-view="overview" class="mobile-nav-btn">
+        <span class="mobile-icon">📊</span>
+        <span>Resumen</span>
+      </button>
+      <button data-view="orders" class="mobile-nav-btn">
+        <span class="mobile-icon">📦</span>
+        <span>Pedidos</span>
+      </button>
+      <button data-view="menu" class="mobile-nav-btn">
+        <span class="mobile-icon">🍔</span>
+        <span>Menú</span>
+      </button>
+      <button id="logout-mobile" class="mobile-nav-btn">
+        <span class="mobile-icon">🚪</span>
+        <span>Salir</span>
+      </button>
+    </nav>
+
+  </div> <!-- /dashboard -->
+
+  <!-- Modal para adjuntar o inspeccionar comprobante de transferencia -->
+  <div id="modal-receipt" class="modal-backdrop" style="display: none;" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="receipt-modal-title">Comprobante de Transferencia</h3>
+        <button type="button" id="modal-receipt-close" class="btn-close" aria-label="Cerrar modal">×</button>
+      </div>
       <div class="modal-body">
-        <div class="form-grid">
-          <label>Código SKU (identificador)
-            <input name="sku" id="edit-sku" type="text" readonly class="input-readonly">
-          </label>
-          <label>Categoría
-            <select name="category" id="edit-category" required>
-              <option value="Hamburguesas">Hamburguesas</option>
-              <option value="Combos">Combos</option>
-              <option value="Complementos">Complementos</option>
-              <option value="Bebidas">Bebidas</option>
-              <option value="Postres">Postres</option>
-            </select>
-          </label>
-          <label>Nombre del producto
-            <input name="name" id="edit-name" type="text" required maxlength="200">
-          </label>
-          <label>Precio en pesos ($ MXN)
-            <input name="price" id="edit-price" type="number" step="1" min="0" required>
-          </label>
-        </div>
-        <label>Descripción detallada
-          <textarea name="description" id="edit-desc" rows="2"></textarea>
-        </label>
-        <div style="margin-top:10px;">
-          <label class="checkbox-label">
-            <input name="active" id="edit-active" type="checkbox">
-            <span>Activo para venta inmediata en WhatsApp</span>
-          </label>
+        <div id="receipt-preview-container" class="receipt-preview-box"></div>
+        <div id="receipt-upload-form" class="receipt-upload-section">
+          <p class="muted">Selecciona el comprobante recibido para asociarlo a este pedido:</p>
+          <input type="file" id="receipt-file-input" accept="image/jpeg,image/png,image/webp,application/pdf">
+          <div style="margin-top:8px;">
+            <label>Referencia bancaria (opcional)
+              <input type="text" id="receipt-bank-ref" placeholder="ej. SPEI 883920">
+            </label>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="modal-edit-cancel" class="btn-secondary">Cancelar</button>
-        <button type="submit" class="btn-primary">Guardar Cambios</button>
+        <button type="button" id="modal-receipt-cancel" class="btn-secondary">Cerrar</button>
+        <button type="button" id="modal-receipt-submit" class="btn-primary">Subir y Asociar Comprobante</button>
       </div>
-    </form>
+    </div>
   </div>
-</div>
 
-</main>
+  <!-- Modal para editar producto del menú -->
+  <div id="modal-edit-product" class="modal-backdrop" style="display: none;" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="edit-modal-title">Editar Producto del Menú</h3>
+        <button type="button" id="modal-edit-close" class="btn-close" aria-label="Cerrar modal">×</button>
+      </div>
+      <form id="edit-product-form">
+        <div class="modal-body">
+          <div class="form-grid">
+            <label>Código SKU (identificador)
+              <input name="sku" id="edit-sku" type="text" readonly class="input-readonly">
+            </label>
+            <label>Categoría
+              <select name="category" id="edit-category" required>
+                <option value="Hamburguesas">Hamburguesas</option>
+                <option value="Combos">Combos</option>
+                <option value="Complementos">Complementos</option>
+                <option value="Bebidas">Bebidas</option>
+                <option value="Postres">Postres</option>
+              </select>
+            </label>
+            <label>Nombre del producto
+              <input name="name" id="edit-name" type="text" required maxlength="200">
+            </label>
+            <label>Precio en pesos ($ MXN)
+              <input name="price" id="edit-price" type="number" step="1" min="0" required>
+            </label>
+          </div>
+          <label>Descripción detallada
+            <textarea name="description" id="edit-desc" rows="2"></textarea>
+          </label>
+          <div style="margin-top:10px;">
+            <label class="checkbox-label">
+              <input name="active" id="edit-active" type="checkbox">
+              <span>Activo para venta inmediata en WhatsApp</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="modal-edit-cancel" class="btn-secondary">Cancelar</button>
+          <button type="submit" class="btn-primary">Guardar Cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div> <!-- /crm-shell -->
 <script src="/remote-app.js"></script>
 </body>
 </html>
