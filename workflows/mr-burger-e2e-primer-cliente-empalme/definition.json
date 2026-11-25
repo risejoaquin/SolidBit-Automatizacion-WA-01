@@ -166,7 +166,7 @@
                     "type": "string"
                   },
                   "payment_method": {
-                    "description": "Método de pago: 'cash' para efectivo, 'transfer' para transferencia o 'card' para tarjeta.",
+                    "description": "Método de pago: 'cash' para efectivo o 'transfer' para transferencia bancaria.",
                     "enum": [
                       "cash",
                       "transfer",
