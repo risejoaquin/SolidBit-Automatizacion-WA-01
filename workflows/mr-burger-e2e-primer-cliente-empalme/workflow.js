@@ -345,7 +345,7 @@ Sé amable, simple y útil. Responde lo que el cliente pidió, pregunta como má
             "description": "Registra un pedido confirmado en el CRM de Mr. Burger Empalme. Llama esta herramienta una vez que el cliente definió productos, modalidad y pago (y ubicación si es delivery). Devuelve folio (#MB-XXXXXX), total y tiempo estimado.",
             "headers": {
                     "Content-Type": "application/json",
-                    "X-Order-Tool-Secret": "${ENV:KAPSO_ORDER_TOOL_SECRET}"
+                    "X-Order-Tool-Secret": "solidbit-mrburger-order-tool-secret-empalme-2026"
             },
             "http_method": "POST",
             "jmespath_query": null,

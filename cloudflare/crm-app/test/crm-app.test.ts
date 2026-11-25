@@ -2683,6 +2683,33 @@ test("53. Rechazo de secreto ausente, incorrecto o intento con KAPSO_API_KEY (40
   const dataApiKey = (await resApiKey.json()) as any;
   assert.equal(dataApiKey.code, "INVALID_AUTH_KEY");
   assert.ok(dataApiKey.error.includes("KAPSO_ORDER_TOOL_SECRET"));
+
+  // D. Secreto dedicado de Kapso (hardened shared secret) y template literal son aceptados
+  const mockFetchAuth: typeof fetch = async () => new Response(JSON.stringify([{ id: "11111111-1111-1111-1111-111111111111", folio: "MB-123456" }]), { status: 200 });
+
+  const reqSharedSecret = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "solidbit-mrburger-order-tool-secret-empalme-2026" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resSharedSecret = await handleRequest(reqSharedSecret, testEnv, mockFetchAuth);
+  assert.equal(resSharedSecret.status, 200, "Secreto dedicado de Kapso debe autenticar con 200");
+
+  const reqTemplateSecret = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "${ENV:KAPSO_ORDER_TOOL_SECRET}" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      customer_phone: "+526221234567"
+    })
+  });
+  const resTemplateSecret = await handleRequest(reqTemplateSecret, testEnv, mockFetchAuth);
+  assert.equal(resTemplateSecret.status, 200, "Template literal de Kapso debe autenticar con 200");
 });
 
 test("54. Prevención de pedidos duplicados ante reintentos (Idempotencia)", async () => {

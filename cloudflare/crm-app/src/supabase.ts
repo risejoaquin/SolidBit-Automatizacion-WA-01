@@ -94,7 +94,8 @@ export async function supabaseRequest<T = any>(
   if (!res.ok) {
     if (res.status === 401) throw new AppHttpError(401, "Credenciales inválidas", "UNAUTHORIZED");
     if (res.status === 403) throw new AppHttpError(403, "Acceso denegado", "FORBIDDEN");
-    throw new AppHttpError(res.status >= 500 ? 502 : res.status, "Error en Supabase", "SUPABASE_ERROR");
+    const detail = payload?.message || payload?.error || payload?.hint || payload?.details || (typeof payload === "string" ? payload : "");
+    throw new AppHttpError(res.status >= 500 ? 502 : res.status, `Error en Supabase${detail ? `: ${detail}` : ""}`, "SUPABASE_ERROR");
   }
 
   return payload as T;
