@@ -343,28 +343,155 @@
 
   </div> <!-- /dashboard -->
 
-  <!-- Modal para adjuntar o inspeccionar comprobante de transferencia -->
+  <!-- Modal para verificación completa de pedido y comprobante de transferencia -->
   <div id="modal-receipt" class="modal-backdrop" style="display: none;" hidden>
-    <div class="modal-card">
+    <div class="modal-card modal-card-lg">
       <div class="modal-header">
-        <h3 id="receipt-modal-title">Comprobante de Transferencia</h3>
-        <button type="button" id="modal-receipt-close" class="btn-close" aria-label="Cerrar modal">×</button>
-      </div>
-      <div class="modal-body">
-        <div id="receipt-preview-container" class="receipt-preview-box"></div>
-        <div id="receipt-upload-form" class="receipt-upload-section">
-          <p class="muted">Selecciona el comprobante recibido para asociarlo a este pedido:</p>
-          <input type="file" id="receipt-file-input" accept="image/jpeg,image/png,image/webp,application/pdf">
-          <div style="margin-top:8px;">
-            <label>Referencia bancaria (opcional)
-              <input type="text" id="receipt-bank-ref" placeholder="ej. SPEI 883920">
-            </label>
+        <div>
+          <h3 id="receipt-modal-title">Verificación de Pedido y Comprobante</h3>
+          <div class="modal-subtitle" style="display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+            <span id="modal-receipt-folio-badge" class="badge-folio">#MB-...</span>
+            <span id="modal-receipt-order-status-badge" class="badge"></span>
+            <span id="modal-receipt-payment-status-badge" class="badge"></span>
           </div>
         </div>
+        <button type="button" id="modal-receipt-close" class="btn-close" aria-label="Cerrar modal">×</button>
       </div>
+
+      <div class="modal-body modal-body-scroll">
+        <!-- Sección 1: Ficha y Formulario Detallado del Pedido -->
+        <div class="receipt-order-card">
+          <div class="receipt-section-header">
+            <h4>📋 Detalle Completo del Pedido</h4>
+            <span id="modal-receipt-time" class="muted" style="font-size: 0.8rem;"></span>
+          </div>
+
+          <div class="receipt-grid-info">
+            <div class="receipt-info-item">
+              <span class="info-label">Cliente / WhatsApp:</span>
+              <span id="modal-receipt-customer" class="info-value">Cargando...</span>
+            </div>
+            <div class="receipt-info-item">
+              <span class="info-label">Modalidad:</span>
+              <span id="modal-receipt-fulfillment" class="info-value">Cargando...</span>
+            </div>
+            <div class="receipt-info-item full-width">
+              <span class="info-label">Dirección / Ubicación:</span>
+              <span id="modal-receipt-address" class="info-value">Cargando...</span>
+            </div>
+          </div>
+
+          <!-- Desglose de Artículos -->
+          <div class="receipt-items-container">
+            <span class="info-label" style="display:block; margin-bottom: 6px;">Productos ordenados:</span>
+            <div id="modal-receipt-items-list" class="receipt-items-list"></div>
+          </div>
+
+          <!-- Resumen de Costos y Total -->
+          <div class="receipt-totals-bar">
+            <div class="total-line">
+              <span>Subtotal:</span>
+              <strong id="modal-receipt-subtotal">$0.00</strong>
+            </div>
+            <div class="total-line">
+              <span>Envío a domicilio:</span>
+              <strong id="modal-receipt-shipping">$0.00</strong>
+            </div>
+            <div class="total-line grand-total">
+              <span>Total a conciliar:</span>
+              <span id="modal-receipt-total" class="total-amount-highlight">$0.00 MXN</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sección 2: Visualizador del Comprobante / Tarjeta de Destino -->
+        <div class="receipt-visualizer-card">
+          <div class="receipt-section-header">
+            <h4>🖼️ Comprobante Bancario / Tarjeta Destino</h4>
+            <span id="receipt-asset-type-badge" class="badge badge-neutral">Cotejo bancario</span>
+          </div>
+
+          <div id="receipt-preview-container" class="receipt-preview-box"></div>
+
+          <div id="receipt-preview-actions" style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; flex-wrap: wrap; gap: 6px;">
+            <a id="receipt-open-full" href="#" target="_blank" class="btn-link" style="font-size: 0.8rem; display: none;">🔍 Ver imagen en tamaño completo</a>
+            <span id="receipt-bank-helper" class="muted" style="font-size: 0.75rem;">Cuenta destino: BBVA · 4152 3138 2940 1827 · Mr. Burger</span>
+          </div>
+        </div>
+
+        <!-- Sección 3: Formulario Operativo de Validación y Conciliación -->
+        <div id="receipt-validation-section" class="receipt-validation-card">
+          <div class="receipt-section-header">
+            <h4>⚡ Validación de Abono en Cuenta</h4>
+          </div>
+
+          <div id="receipt-already-validated-msg" class="banner-success" style="display: none;">
+            ✅ Este abono ya fue verificado y validado en la cuenta bancaria.
+          </div>
+
+          <div id="receipt-validation-fields" class="validation-fields-wrap">
+            <div class="receipt-grid-inputs">
+              <label>Clave de rastreo SPEI / Referencia
+                <input type="text" id="receipt-verify-ref" placeholder="ej. 883920 o folio de banca móvil" class="input-field">
+              </label>
+              <label>Monto verificado en cuenta ($ MXN)
+                <input type="number" id="receipt-verify-amount" placeholder="0.00" class="input-field">
+              </label>
+            </div>
+            <label style="margin-top: 8px;">Notas operativas (opcional)
+              <input type="text" id="receipt-verify-notes" placeholder="ej. Verificado abono en banca móvil BBVA" class="input-field">
+            </label>
+
+            <!-- Acciones de Validación -->
+            <div class="validation-buttons-row">
+              <button type="button" id="btn-modal-validate-payment" class="btn-primary btn-success-action">
+                ✅ Aprobar / Validar Pago
+              </button>
+              <button type="button" id="btn-modal-toggle-reject" class="btn-secondary btn-danger-action">
+                ❌ Rechazar Pago
+              </button>
+            </div>
+
+            <!-- Panel de Rechazo (colapsable) -->
+            <div id="receipt-reject-box" class="reject-box" style="display: none;">
+              <label>Motivo de rechazo del pago:
+                <select id="receipt-reject-reason-select" class="input-field">
+                  <option value="Comprobante ilegible o incompleto">Comprobante ilegible o incompleto</option>
+                  <option value="Abono no reflejado en la cuenta bancaria">Abono no reflejado en la cuenta bancaria</option>
+                  <option value="Monto recibido menor al total del pedido">Monto recibido menor al total del pedido</option>
+                  <option value="Folio de rastreo SPEI no coincide">Folio de rastreo SPEI no coincide</option>
+                  <option value="otro">Otro motivo personalizado...</option>
+                </select>
+              </label>
+              <input type="text" id="receipt-reject-custom-reason" placeholder="Especifica el motivo..." class="input-field" style="display: none; margin-top: 6px;">
+              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;">
+                <button type="button" id="btn-modal-cancel-reject" class="btn-secondary btn-sm">Cancelar</button>
+                <button type="button" id="btn-modal-confirm-reject" class="btn-danger btn-sm">Confirmar Rechazo</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sección 4: Acordeón para Subida Manual de Comprobante -->
+        <details id="receipt-upload-accordion" class="receipt-upload-accordion">
+          <summary>📎 Adjuntar o reemplazar comprobante manualmente</summary>
+          <div class="receipt-upload-inner">
+            <p class="muted" style="font-size: 0.8rem; margin: 8px 0;">Selecciona una imagen o PDF si el cliente envió el comprobante por otro canal:</p>
+            <input type="file" id="receipt-file-input" accept="image/jpeg,image/png,image/webp,application/pdf">
+            <div style="margin-top: 8px;">
+              <label>Referencia bancaria para el archivo (opcional)
+                <input type="text" id="receipt-bank-ref" placeholder="ej. SPEI 883920" class="input-field">
+              </label>
+            </div>
+            <div style="margin-top: 10px; text-align: right;">
+              <button type="button" id="modal-receipt-submit" class="btn-secondary btn-sm">Subir y Asociar Archivo</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
       <div class="modal-footer">
         <button type="button" id="modal-receipt-cancel" class="btn-secondary">Cerrar</button>
-        <button type="button" id="modal-receipt-submit" class="btn-primary">Subir y Asociar Comprobante</button>
       </div>
     </div>
   </div>

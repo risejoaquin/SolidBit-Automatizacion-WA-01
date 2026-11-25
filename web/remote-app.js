@@ -809,25 +809,17 @@ async function dispatchOrderAction(orderId, folio) {
 }
 
 async function validatePaymentAction(orderId, folio) {
-  if (!confirm(`¿Confirmas que el abono del pedido ${folio} fue verificado en la cuenta bancaria?`)) return;
-  try {
-    await api(`/api/orders/${orderId}/validate-payment`, "POST", { confirmed_bank_deposit: true });
-    flash(`Pago del pedido ${folio} validado con éxito.`, "success");
-    await orders(true);
-  } catch (err) {
-    flash(err.message || "Error al validar abono");
-  }
+  // Abre el formulario completo de verificación y comprobante
+  openReceiptModal(orderId, folio);
 }
 
 async function rejectPaymentAction(orderId, folio) {
-  const reason = prompt(`Indica el motivo de rechazo del pago para el pedido ${folio}:`);
-  if (!reason || !reason.trim()) return;
-  try {
-    await api(`/api/orders/${orderId}/reject-payment`, "POST", { rejection_reason: reason.trim() });
-    flash(`Comprobante del pedido ${folio} rechazado.`, "success");
-    await orders(true);
-  } catch (err) {
-    flash(err.message || "Error al rechazar abono");
+  // Abre el formulario de verificación enfocado en el motivo de rechazo
+  openReceiptModal(orderId, folio);
+  const rejectBox = $("receipt-reject-box");
+  if (rejectBox) {
+    rejectBox.style.display = "block";
+    rejectBox.scrollIntoView({ behavior: "smooth" });
   }
 }
 
@@ -843,6 +835,8 @@ function closeReceiptModal() {
   if (fileInput) fileInput.value = "";
   const bankRef = $("receipt-bank-ref");
   if (bankRef) bankRef.value = "";
+  const rejectBox = $("receipt-reject-box");
+  if (rejectBox) rejectBox.style.display = "none";
   currentModalOrderId = null;
 }
 
@@ -854,9 +848,102 @@ function openReceiptModal(orderId, folio) {
   currentModalOrderId = orderId;
   const modal = $("modal-receipt");
   if (!modal) return;
-  $("receipt-modal-title").textContent = `Comprobante de Transferencia · ${folio}`;
+
+  const displayFolio = folio || ("#" + orderId.slice(0, 6).toUpperCase());
+  $("receipt-modal-title").textContent = `Verificación de Pedido y Comprobante · ${displayFolio}`;
+  $("modal-receipt-folio-badge").textContent = displayFolio;
+
+  // Buscar pedido en cache
+  const order = cachedOrders.find(o => o.id === orderId) || {};
+
+  // Actualizar badges de estado
+  const orderBadge = $("modal-receipt-order-status-badge");
+  if (orderBadge) {
+    orderBadge.className = `badge badge-${order.order_status || "received"}`;
+    orderBadge.textContent = getOrderStatusLabel(order.order_status || "received");
+  }
+  const paymentBadge = $("modal-receipt-payment-status-badge");
+  if (paymentBadge) {
+    paymentBadge.className = `badge badge-${order.payment_status || "pending"}`;
+    paymentBadge.textContent = getPaymentStatusLabel(order.payment_status || "pending");
+  }
+
+  // Ficha y formulario detallado del pedido
+  const timeStr = order.created_at
+    ? new Date(order.created_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })
+    : "";
+  if ($("modal-receipt-time")) $("modal-receipt-time").textContent = timeStr;
+  if ($("modal-receipt-customer")) $("modal-receipt-customer").textContent = order.customer_ref || "Mostrador / Sin teléfono";
+
+  const isDelivery = order.fulfillment === "delivery";
+  if ($("modal-receipt-fulfillment")) {
+    $("modal-receipt-fulfillment").textContent = isDelivery ? "🛵 Domicilio" : "🏪 Recoger en sucursal";
+  }
+  if ($("modal-receipt-address")) {
+    $("modal-receipt-address").textContent = order.address || (isDelivery ? "Dirección pendiente de confirmación" : "En sucursal Mr. Burger");
+  }
+
+  // Desglose de artículos
+  const itemsContainer = $("modal-receipt-items-list");
+  if (itemsContainer) {
+    itemsContainer.replaceChildren();
+    if (Array.isArray(order.items) && order.items.length) {
+      for (const item of order.items) {
+        const itemRow = node("div", "", "receipt-item-row");
+        const qty = item.quantity || 1;
+        const unitPrice = item.price_cents ? money(item.price_cents) : "";
+        const totalLine = item.price_cents ? money(item.price_cents * qty) : "";
+        itemRow.innerHTML = `
+          <div class="item-name-col">
+            <span class="item-qty-badge">${qty}×</span>
+            <strong>${item.name || item.sku || "Artículo"}</strong>
+          </div>
+          <div class="item-price-col muted">${unitPrice ? `${unitPrice} c/u` : ""}</div>
+          <div class="item-total-col"><strong>${totalLine}</strong></div>
+        `;
+        itemsContainer.append(itemRow);
+      }
+    } else {
+      itemsContainer.append(node("p", "Sin lista de artículos registrada.", "muted"));
+    }
+  }
+
+  // Totales
+  const shippingCents = isDelivery ? (order.delivery_fee_cents ?? 4000) : 0;
+  const subtotalCents = (order.total_cents && order.total_cents > shippingCents)
+    ? (order.total_cents - shippingCents)
+    : (order.subtotal_cents || order.total_cents || 0);
+
+  if ($("modal-receipt-subtotal")) $("modal-receipt-subtotal").textContent = money(subtotalCents);
+  if ($("modal-receipt-shipping")) $("modal-receipt-shipping").textContent = money(shippingCents);
+  if ($("modal-receipt-total")) $("modal-receipt-total").textContent = money(order.total_cents || 0);
+
+  // Formulario de validación
+  const isValidated = order.payment_status === "validated";
+  const alreadyValMsg = $("receipt-already-validated-msg");
+  const valFields = $("receipt-validation-fields");
+  if (alreadyValMsg) alreadyValMsg.style.display = isValidated ? "block" : "none";
+  if (valFields) valFields.style.display = isValidated ? "none" : "block";
+
+  if ($("receipt-verify-amount")) {
+    $("receipt-verify-amount").value = order.total_cents ? (order.total_cents / 100).toFixed(2) : "";
+  }
+  if ($("receipt-verify-ref")) {
+    $("receipt-verify-ref").value = order.payment_reference || order.bank_reference || "";
+  }
+  if ($("receipt-verify-notes")) {
+    $("receipt-verify-notes").value = "";
+  }
+  if ($("receipt-reject-box")) {
+    $("receipt-reject-box").style.display = "none";
+  }
+
+  // Visualizador del comprobante
   const preview = $("receipt-preview-container");
-  preview.replaceChildren(node("p", "Buscando comprobante adjunto…", "muted"));
+  preview.replaceChildren(node("p", "Cargando imagen del comprobante…", "muted"));
+  const openFullLink = $("receipt-open-full");
+  if (openFullLink) openFullLink.style.display = "none";
+
   modal.style.display = "flex";
   modal.hidden = false;
   modal.removeAttribute("hidden");
@@ -864,27 +951,150 @@ function openReceiptModal(orderId, folio) {
   api(`/api/orders/${orderId}/receipt-url`)
     .then(data => {
       preview.replaceChildren();
-      if (data.signed_url) {
-        if (data.receipt.mime_type === "application/pdf") {
-          const a = node("a", "Descargar comprobante en PDF", "btn-primary");
-          a.href = data.signed_url;
-          a.target = "_blank";
-          preview.append(a);
-        } else {
-          const img = document.createElement("img");
-          img.src = data.signed_url;
-          img.alt = "Comprobante bancario";
-          img.style.maxWidth = "100%";
-          img.style.borderRadius = "8px";
-          preview.append(img);
+      const assetBadge = $("receipt-asset-type-badge");
+
+      if (data.is_demo_asset) {
+        if (assetBadge) {
+          assetBadge.textContent = "Tarjeta destino demo (QA)";
+          assetBadge.className = "badge badge-warning";
         }
       } else {
-        preview.append(node("p", "No hay imagen registrada para este pedido. Puedes adjuntarla abajo.", "muted"));
+        if (assetBadge) {
+          assetBadge.textContent = "Comprobante verificado";
+          assetBadge.className = "badge badge-success";
+        }
+      }
+
+      const imageUrl = data.signed_url || "/qa/tarjeta-destino-demo.png";
+
+      if (openFullLink) {
+        openFullLink.href = imageUrl;
+        openFullLink.style.display = "inline-block";
+      }
+
+      if (data.receipt?.mime_type === "application/pdf") {
+        const a = node("a", "📄 Descargar comprobante en PDF", "btn-primary");
+        a.href = imageUrl;
+        a.target = "_blank";
+        preview.append(a);
+      } else {
+        const img = document.createElement("img");
+        img.src = imageUrl;
+        img.alt = "Comprobante bancario o tarjeta de destino";
+        img.className = "receipt-img";
+        preview.append(img);
       }
     })
     .catch(() => {
-      preview.replaceChildren(node("p", "Sin comprobante registrado aún. Puedes adjuntarlo abajo:", "muted"));
+      preview.replaceChildren();
+      const img = document.createElement("img");
+      img.src = "/qa/tarjeta-destino-demo.png";
+      img.alt = "Tarjeta bancaria de destino (QA)";
+      img.className = "receipt-img";
+      preview.append(img);
+
+      const assetBadge = $("receipt-asset-type-badge");
+      if (assetBadge) {
+        assetBadge.textContent = "Tarjeta destino demo (QA)";
+        assetBadge.className = "badge badge-warning";
+      }
+      if (openFullLink) {
+        openFullLink.href = "/qa/tarjeta-destino-demo.png";
+        openFullLink.style.display = "inline-block";
+      }
     });
+}
+
+// Botones de acción dentro del modal
+if ($("btn-modal-validate-payment")) {
+  $("btn-modal-validate-payment").onclick = async () => {
+    if (!currentModalOrderId) return;
+    const btn = $("btn-modal-validate-payment");
+    btn.disabled = true;
+    btn.textContent = "Validando abono…";
+
+    try {
+      const ref = $("receipt-verify-ref")?.value?.trim() || "";
+      const amt = $("receipt-verify-amount")?.value?.trim() || "";
+      const notes = $("receipt-verify-notes")?.value?.trim() || "";
+      const fullNotes = [notes, ref ? `Ref SPEI: ${ref}` : "", amt ? `Monto: $${amt}` : ""].filter(Boolean).join(" · ");
+
+      await api(`/api/orders/${currentModalOrderId}/validate-payment`, "POST", {
+        confirmed_bank_deposit: true,
+        notes: fullNotes || "Abono verificado en cuenta bancaria"
+      });
+
+      flash("Pago validado correctamente en la cuenta bancaria.", "success");
+      closeReceiptModal();
+      await orders(true);
+    } catch (err) {
+      flash(err.message || "Error al validar abono", "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "✅ Aprobar / Validar Pago";
+    }
+  };
+}
+
+if ($("btn-modal-toggle-reject")) {
+  $("btn-modal-toggle-reject").onclick = () => {
+    const box = $("receipt-reject-box");
+    if (!box) return;
+    const isHidden = box.style.display === "none";
+    box.style.display = isHidden ? "block" : "none";
+    if (isHidden) {
+      box.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+}
+
+if ($("receipt-reject-reason-select")) {
+  $("receipt-reject-reason-select").onchange = (e) => {
+    const custom = $("receipt-reject-custom-reason");
+    if (custom) {
+      custom.style.display = e.target.value === "otro" ? "block" : "none";
+    }
+  };
+}
+
+if ($("btn-modal-cancel-reject")) {
+  $("btn-modal-cancel-reject").onclick = () => {
+    const box = $("receipt-reject-box");
+    if (box) box.style.display = "none";
+  };
+}
+
+if ($("btn-modal-confirm-reject")) {
+  $("btn-modal-confirm-reject").onclick = async () => {
+    if (!currentModalOrderId) return;
+    const select = $("receipt-reject-reason-select");
+    let reason = select?.value || "";
+    if (reason === "otro") {
+      reason = $("receipt-reject-custom-reason")?.value?.trim() || "";
+    }
+    if (!reason) {
+      alert("Por favor selecciona o escribe el motivo de rechazo.");
+      return;
+    }
+
+    const btn = $("btn-modal-confirm-reject");
+    btn.disabled = true;
+    btn.textContent = "Rechazando…";
+
+    try {
+      await api(`/api/orders/${currentModalOrderId}/reject-payment`, "POST", {
+        rejection_reason: reason
+      });
+      flash("Comprobante rechazado. Se actualizó el estado a 'rejected'.", "success");
+      closeReceiptModal();
+      await orders(true);
+    } catch (err) {
+      flash(err.message || "Error al rechazar abono", "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Confirmar Rechazo";
+    }
+  };
 }
 
 if ($("modal-receipt-close")) $("modal-receipt-close").onclick = closeReceiptModal;
