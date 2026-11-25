@@ -1178,7 +1178,11 @@ async function checkSession() {
     const roleLabels = { owner: "Propietario", manager: "Gerente", operator: "Operador", worker: "Operador" };
     const userDisplay = `${user.email} (${roleLabels[user.role] || user.role})`;
     $("user").textContent = userDisplay;
-    if ($("user-sidebar")) $("user-sidebar").textContent = userDisplay;
+    if ($("user-sidebar")) $("user-sidebar").textContent = user.email;
+    if ($("user-sidebar-role")) $("user-sidebar-role").textContent = (roleLabels[user.role] || user.role).toUpperCase();
+    if ($("topbar-date")) {
+      $("topbar-date").textContent = new Date().toLocaleDateString("es-MX", { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    }
 
     applyRolePermissions(user.role);
 

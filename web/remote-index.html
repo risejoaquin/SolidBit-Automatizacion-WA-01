@@ -23,18 +23,19 @@
   <section id="login-panel" class="card" hidden>
     <div class="login-header">
       <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="sb-login-logo">
-      <h2>Ingreso al Sistema</h2>
-      <p class="muted">Acceso autorizado para personal de Mr. Burger</p>
+      <h2>Acceso privado</h2>
+      <p class="muted">Centro de Mando Comercial · Mr. Burger</p>
     </div>
     <div id="session-expired-notice" class="warning" hidden></div>
     <form id="login-form">
-      <label>Correo electrónico
+      <label>Usuario operativo
         <input name="email" type="email" autocomplete="username" placeholder="usuario@mrburger.test" required>
       </label>
       <label>Contraseña
         <input name="password" type="password" autocomplete="current-password" placeholder="••••••••••••" required>
       </label>
-      <button type="submit" class="btn-primary login-btn">Iniciar Sesión</button>
+      <button type="submit" class="btn-primary login-btn">Iniciar sesión</button>
+      <p class="login-footer-text">Acceso restringido a personal autorizado</p>
     </form>
   </section>
 
@@ -47,7 +48,7 @@
         <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="sidebar-logo">
         <div class="brand-info">
           <div class="brand-title">Mr. Burger</div>
-          <div class="brand-sub">Empalme, Sonora</div>
+          <div class="brand-sub">Operations / Empalme</div>
         </div>
       </div>
 
@@ -68,7 +69,8 @@
         <div class="user-profile-card">
           <span class="user-avatar">👤</span>
           <div class="user-profile-info">
-            <span id="user-sidebar" class="user-sidebar-name"></span>
+            <strong id="user-sidebar" class="user-sidebar-name"></strong>
+            <small id="user-sidebar-role" class="user-sidebar-role">PERSONAL AUTORIZADO</small>
           </div>
         </div>
         <button id="logout" class="btn-sidebar-logout" title="Cerrar sesión">
@@ -85,10 +87,16 @@
             <img src="/brand/solidbit-logo.svg" alt="SolidBit" class="topbar-logo-mobile">
             <span class="topbar-title-mobile">Mr. Burger</span>
           </div>
+          <div class="topbar-titles">
+            <span class="topbar-eyebrow">SOLIDBIT / OPERATIONS</span>
+            <h1 class="topbar-title">Mr. Burger</h1>
+            <span class="topbar-sub">Centro comercial y automatización de WhatsApp</span>
+          </div>
           <span class="tenant-badge">Empalme · WhatsApp CRM</span>
         </div>
 
         <div class="header-actions">
+          <span id="topbar-date" class="topbar-date"></span>
           <button id="sound-toggle" class="sound-toggle-btn" title="Activar/Silenciar sonidos">
             <span id="sound-icon">🔊</span><span id="sound-label">Sonido</span>
           </button>
