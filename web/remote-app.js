@@ -52,6 +52,12 @@ function handleSessionExpired(noticeText) {
   closeReceiptModal();
   closeEditProductModal();
 
+  // Reset role-restricted navigation visibility
+  const btnOverview = document.querySelector('button[data-view="overview"]');
+  const btnMenu = document.querySelector('button[data-view="menu"]');
+  if (btnOverview) btnOverview.hidden = false;
+  if (btnMenu) btnMenu.hidden = false;
+
   if ($("session-loading")) $("session-loading").hidden = true;
   $("login-panel").hidden = false;
   $("dashboard").hidden = true;
@@ -366,7 +372,27 @@ document.querySelectorAll("[data-view]").forEach(btn => {
   btn.onclick = () => change(btn.dataset.view);
 });
 
+function applyRolePermissions(role) {
+  const isOwnerOrManager = role === "owner" || role === "manager";
+  const btnOverview = document.querySelector('button[data-view="overview"]');
+  const btnMenu = document.querySelector('button[data-view="menu"]');
+  if (btnOverview) {
+    btnOverview.hidden = !isOwnerOrManager;
+    if (!isOwnerOrManager) btnOverview.setAttribute("hidden", "");
+    else btnOverview.removeAttribute("hidden");
+  }
+  if (btnMenu) {
+    btnMenu.hidden = !isOwnerOrManager;
+    if (!isOwnerOrManager) btnMenu.setAttribute("hidden", "");
+    else btnMenu.removeAttribute("hidden");
+  }
+}
+
 async function change(name, param) {
+  const isOwnerOrManager = currentRole === "owner" || currentRole === "manager";
+  if (!isOwnerOrManager && (name === "overview" || name === "menu")) {
+    name = "handoff";
+  }
   show(name);
   flash("");
   try {
@@ -378,7 +404,11 @@ async function change(name, param) {
 
 function resolveInitialView() {
   const hash = (window.location.hash || "").replace(/^#/, "").trim();
-  if (sectionIds.includes(hash)) return hash;
+  const isOwnerOrManager = currentRole === "owner" || currentRole === "manager";
+  const allowedSections = isOwnerOrManager
+    ? sectionIds
+    : ["handoff", "orders"];
+  if (allowedSections.includes(hash)) return hash;
   return "handoff"; // Always default landing screen
 }
 
@@ -1065,6 +1095,15 @@ function closeEditProductModal() {
 if ($("modal-edit-close")) $("modal-edit-close").onclick = closeEditProductModal;
 if ($("modal-edit-cancel")) $("modal-edit-cancel").onclick = closeEditProductModal;
 
+const modalEditBackdropEl = $("modal-edit-product");
+if (modalEditBackdropEl) {
+  modalEditBackdropEl.onclick = (e) => {
+    if (e.target === modalEditBackdropEl) {
+      closeEditProductModal();
+    }
+  };
+}
+
 if ($("edit-product-form")) {
   $("edit-product-form").onsubmit = async (e) => {
     e.preventDefault();
@@ -1123,6 +1162,8 @@ async function checkSession() {
     // Display user and role cleanly
     const roleLabels = { owner: "Propietario", manager: "Gerente", operator: "Operador", worker: "Operador" };
     $("user").textContent = `${user.email} (${roleLabels[user.role] || user.role})`;
+
+    applyRolePermissions(user.role);
 
     const initial = resolveInitialView();
     await change(initial);
