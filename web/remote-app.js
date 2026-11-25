@@ -841,9 +841,16 @@ function closeReceiptModal() {
 }
 
 function openReceiptModal(orderId, folio) {
+  // Asegurar contexto de sesión si el dashboard está visible
   if (!currentUser) {
-    flash("Inicia sesión para adjuntar o inspeccionar comprobantes.", "error");
-    return;
+    if (currentRole) {
+      currentUser = currentRole;
+    } else if ($("dashboard") && !$("dashboard").hidden) {
+      currentUser = "authenticated";
+    } else {
+      flash("Inicia sesión para adjuntar o inspeccionar comprobantes.", "error");
+      return;
+    }
   }
   currentModalOrderId = orderId;
   const modal = $("modal-receipt");
@@ -1375,7 +1382,7 @@ const loaders = { handoff, overview, orders, menu };
 async function checkSession() {
   try {
     const user = await api("/api/me");
-    currentUser = user.user_id;
+    currentUser = user.user_id || user.userId || user.email || "authenticated";
     currentRole = user.role;
     canValidateTransfers = Boolean(user.can_validate_transfers || user.payments_review);
     localStorage.setItem("crm_had_session", "true");

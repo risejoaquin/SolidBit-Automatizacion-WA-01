@@ -1095,6 +1095,8 @@ export async function handleRequest(
     // GET /api/me
     if (method === "GET" && url.pathname === "/api/me") {
       return jsonResponse(200, {
+        userId: user.userId,
+        user_id: user.userId,
         email: user.email,
         role: user.role,
         assignee_id: user.assigneeId || null,
