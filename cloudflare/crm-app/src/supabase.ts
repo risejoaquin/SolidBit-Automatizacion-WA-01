@@ -1442,19 +1442,36 @@ export interface CreateKapsoOrderParams {
 
 /**
  * Converts any arbitrary text string (e.g. an idempotency key) into a deterministic RFC 4122 v5 UUID.
+ * Uses the standard DNS namespace (6ba7b810-9dad-11d1-80b4-00c04fd430c8) and SHA-1 as specified in RFC 4122 Section 4.3.
  * If the input is already a valid UUID string, returns it normalized.
  */
-export async function toDeterministicUuid(input: string): Promise<string> {
+export async function toDeterministicUuid(
+  input: string,
+  namespace: string = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+): Promise<string> {
   const trimmed = String(input || "").trim().toLowerCase();
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
     return trimmed;
   }
-  const enc = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", enc.encode("solidbit:order:idempotency:" + trimmed));
-  const bytes = new Uint8Array(hashBuffer);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50; // RFC 4122 version 5
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
-  const hex = Array.from(bytes.slice(0, 16)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const cleanNs = namespace.replace(/-/g, "");
+  const nsBytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    nsBytes[i] = parseInt(cleanNs.substr(i * 2, 2), 16);
+  }
+  const nameBytes = new TextEncoder().encode(trimmed);
+  const combined = new Uint8Array(nsBytes.length + nameBytes.length);
+  combined.set(nsBytes);
+  combined.set(nameBytes, nsBytes.length);
+
+  const hashBuffer = await crypto.subtle.digest("SHA-1", combined);
+  const hash = new Uint8Array(hashBuffer);
+
+  // RFC 4122 Section 4.3: Set octet 6 high nibble to version 5 (0101)
+  hash[6] = (hash[6] & 0x0f) | 0x50;
+  // RFC 4122 Section 4.3: Set octet 8 high 2 bits to variant 1 (10)
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(hash.slice(0, 16)).map(b => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
@@ -1468,6 +1485,7 @@ export async function createKapsoOrder(
     : crypto.randomUUID();
 
   // 1. Check exact confirmation_key idempotency using valid UUID
+  // Do NOT hide errors with .catch(() => []): a failure querying Supabase must fail-closed and not proceed to insert.
   if (confirmationUuid) {
     const existingByKey = await supabaseRequest<any[]>(
       "/rest/v1/orders",
@@ -1482,7 +1500,7 @@ export async function createKapsoOrder(
       },
       config,
       fetchFn
-    ).catch(() => []);
+    );
 
     if (existingByKey && existingByKey.length > 0) {
       return { order: existingByKey[0], duplicate: true };
@@ -1490,6 +1508,7 @@ export async function createKapsoOrder(
   }
 
   // 2. Check duplicate message burst (same customer/conversation, same total, same fulfillment in last 90 seconds)
+  // Do NOT hide errors with .catch(() => []): a read failure must fail-closed.
   const recentOrders = await supabaseRequest<any[]>(
     "/rest/v1/orders",
     {
@@ -1506,7 +1525,7 @@ export async function createKapsoOrder(
     },
     config,
     fetchFn
-  ).catch(() => []);
+  );
 
   if (recentOrders && recentOrders.length > 0) {
     const latest = recentOrders[0];
@@ -1549,15 +1568,11 @@ export async function createKapsoOrder(
     fetchFn
   );
 
-  const newOrder = (inserted && inserted[0]) ? inserted[0] : {
-    id: orderId,
-    folio,
-    business_id: config.businessId,
-    total_cents: params.totalCents,
-    order_status: params.orderStatus,
-    payment_status: params.paymentStatus,
-    fulfillment: params.fulfillment
-  };
+  if (!inserted || inserted.length === 0 || !inserted[0]?.id) {
+    throw new AppHttpError(502, "Fallo al confirmar la persistencia del pedido en base de datos", "ORDER_PERSISTENCE_FAILED");
+  }
+
+  const newOrder = inserted[0];
 
   // 3. Link associated payment receipt if present (e.g. card/transfer receipt)
   if (params.associatedReceiptId) {

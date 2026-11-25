@@ -741,6 +741,14 @@ export async function handleRequest(
     // Check receipt for card payment (must have an existing image receipt in the conversation or explicitly passed)
     let associatedReceiptId: string | null = null;
     if (paymentMethod === "card") {
+      if (env.ENABLE_CARD_PAYMENTS !== "true") {
+        return jsonResponse(400, {
+          ok: false,
+          error: "El método de pago con tarjeta no está activo en el esquema actual de base de datos (requiere migración 013). Métodos admitidos actualmente: cash, transfer.",
+          code: "CARD_PAYMENTS_DISABLED"
+        });
+      }
+
       let candidateReceipts: any[] = [];
       const convId = String(body.conversation_id || "").trim();
 
@@ -1167,20 +1175,27 @@ export async function handleRequest(
 
   // GET /api/notifications
   if (method === "GET" && url.pathname === "/api/notifications") {
-    const state = url.searchParams.get("state") || "pending";
+    const state = url.searchParams.get("state") || "all";
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
-    const notifications = await getNotifications(
-      {
-        userId: user.userId,
-        role: user.role,
-        canValidateTransfers: Boolean(user.canValidateTransfers),
-        state,
-        limit
-      },
-      sbConfig,
-      fetchFn
-    );
-    return jsonResponse(200, { notifications });
+    try {
+      const notifications = await getNotifications(
+        {
+          userId: user.userId,
+          role: user.role,
+          canValidateTransfers: Boolean(user.canValidateTransfers),
+          state,
+          limit
+        },
+        sbConfig,
+        fetchFn
+      );
+      return jsonResponse(200, { notifications: notifications || [] });
+    } catch (err: any) {
+      return jsonResponse(502, {
+        error: "Error al consultar notificaciones en la base de datos: " + (err.message || "desconocido"),
+        code: "NOTIFICATIONS_FETCH_ERROR"
+      });
+    }
   }
 
   // POST /api/notifications/:id/read
@@ -1668,6 +1683,24 @@ export async function handleRequest(
       return jsonResponse(400, { error: "El precio en centavos debe ser un valor positivo" });
     }
 
+    // Check if SKU already exists
+    const existingSku = await supabaseRequest<any[]>(
+      "/rest/v1/menu_products",
+      {
+        privileged: true,
+        query: { select: "sku", sku: "eq." + sku, limit: "1" }
+      },
+      sbConfig,
+      fetchFn
+    ).catch(() => []);
+
+    if (existingSku && existingSku.length > 0) {
+      return jsonResponse(409, {
+        error: `El código SKU '${sku}' ya existe en el menú. Utilice un código diferente o edite el producto existente.`,
+        code: "DUPLICATE_SKU"
+      });
+    }
+
     const created = await supabaseRequest<any[]>(
       "/rest/v1/menu_products",
       {
@@ -1735,6 +1768,50 @@ export async function handleRequest(
     }
 
     return jsonResponse(200, { ok: true, product: updated[0] });
+  }
+
+  // DELETE /api/menu/:sku: soft delete / deactivate product (owner and manager)
+  if (method === "DELETE" && menuSkuMatch) {
+    if (user.role !== "owner" && user.role !== "manager") {
+      return jsonResponse(403, { error: "Acceso denegado: se requiere rol administrativo para eliminar productos del menú" });
+    }
+    const targetSku = menuSkuMatch[1].toLowerCase();
+
+    const existing = await supabaseRequest<any[]>(
+      "/rest/v1/menu_products",
+      {
+        privileged: true,
+        query: { select: "sku,name,active", sku: "eq." + targetSku, limit: "1" }
+      },
+      sbConfig,
+      fetchFn
+    ).catch(() => []);
+
+    if (!existing || existing.length === 0) {
+      return jsonResponse(404, { error: "Producto no encontrado en el menú", code: "MENU_PRODUCT_NOT_FOUND" });
+    }
+
+    // Soft delete: set active = false to preserve order history and referential integrity
+    const updated = await supabaseRequest<any[]>(
+      "/rest/v1/menu_products",
+      {
+        method: "PATCH",
+        privileged: true,
+        prefer: "return=representation",
+        query: { sku: "eq." + targetSku },
+        body: { active: false }
+      },
+      sbConfig,
+      fetchFn
+    );
+
+    return jsonResponse(200, {
+      ok: true,
+      deleted: true,
+      soft_delete: true,
+      sku: targetSku,
+      product: updated?.[0] || { ...existing[0], active: false }
+    });
   }
 
   // All remaining routes require "owner" role

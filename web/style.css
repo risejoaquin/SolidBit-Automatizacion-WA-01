@@ -245,6 +245,41 @@ nav button.logout-btn:hover {
   border-color: #cbd5e1;
 }
 
+.btn-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  border-radius: var(--crm-radius);
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-height: 40px;
+}
+
+.btn-danger:hover {
+  background: #fecaca;
+  border-color: #f87171;
+}
+
+.input-readonly {
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.notif-error-box {
+  padding: 16px;
+  text-align: center;
+  color: #b91c1c;
+}
+
+.notif-error-msg {
+  font-size: 0.875rem;
+  margin: 0 0 10px;
+}
+
 .btn-sm {
   padding: 5px 10px;
   font-size: 0.8rem;

@@ -26,6 +26,7 @@ const testEnv: Env = {
   KAPSO_ORDER_TOOL_SECRET: "mock-order-tool-secret",
   KAPSO_PHONE_NUMBER_ID: "1462335776957834",
   WORKER_VERSION: "1.1.0",
+  ENABLE_CARD_PAYMENTS: "true",
   ENVIRONMENT: "test"
 };
 
@@ -3026,18 +3027,31 @@ test("63. Reglas del bot en Kapso: saludo sin invitación a ordenar, no repetir 
   const workflowPath = path.resolve("workflows/mr-burger-e2e-primer-cliente-empalme/workflow.js");
   const code = fs.readFileSync(workflowPath, "utf8");
 
-  // 1. Saludo sin invitación a ordenar
-  assert.ok(code.includes("Si el cliente solo saluda (ej. “hola”, “buenas tardes”), contesta únicamente un saludo breve y natural"));
-  assert.ok(code.includes("No preguntes qué se le antoja ni lo invites a ordenar"));
+  const defPath = path.resolve("workflows/mr-burger-e2e-primer-cliente-empalme/definition.json");
+  const defJson = JSON.parse(fs.readFileSync(defPath, "utf8"));
+  const prompt = defJson.nodes.find((n: any) => n.id === "agent_1795315891972")?.data?.config?.system_prompt || "";
 
-  // 2. No repetir resumen en cada turno
+  // 1. Saludo sin invitación a ordenar y regla estricta de saludo aislado
+  assert.ok(code.includes("Si el cliente solo saluda (ej. “hola”, “buenas tardes”), contesta únicamente un saludo breve y natural"));
+  assert.ok(code.includes("No agregues “¿qué se te antoja?”, “¿en qué te ayudo?”, invitaciones a ordenar ni ofrecimientos del menú"));
+  assert.ok(code.includes("No preguntes qué se le antoja ni lo invites a ordenar"));
+  assert.ok(code.includes("Si el cliente saluda y además pide algo en el mismo mensaje: saluda brevemente y atiende la solicitud"));
+
+  // Verificación en definition.json sincronizado
+  assert.ok(prompt.includes("No agregues “¿qué se te antoja?”, “¿en qué te ayudo?”, invitaciones a ordenar ni ofrecimientos del menú"));
+  assert.ok(prompt.includes("Si el cliente saluda y además pide algo en el mismo mensaje: saluda brevemente y atiende la solicitud"));
+
+  // 2. Comportamiento verificado de menú: dos imágenes sin texto adicional tras éxito
+  assert.ok(code.includes("Si la herramienta devuelve éxito (ok: true), no envíes ningún mensaje de texto ni confirmación"));
+
+  // 3. No repetir resumen en cada turno
   assert.ok(code.includes("No repitas el pedido como resumen en cada turno ni agregues explicaciones"));
 
-  // 3. Handoff solo ante solicitud explícita y no automático ante fallo
+  // 4. Handoff solo ante solicitud explícita y no automático ante fallo
   assert.ok(code.includes("NO ejecutes handoff_to_human automáticamente ante un fallo de registro"));
   assert.ok(code.includes("Ejecuta la herramienta handoff_to_human ÚNICAMENTE si el cliente solicita de forma explícita hablar con una persona"));
 
-  // 4. Tarjeta no se convierte a efectivo y exige comprobante
+  // 5. Tarjeta no se convierte a efectivo y exige comprobante
   assert.ok(code.includes("Tarjeta (card): el sistema no la convierte a efectivo. Requiere que el cliente envíe foto/captura del comprobante"));
 });
 
@@ -3580,4 +3594,456 @@ test("74. Fallo de base de datos nunca reporta pedido confirmado (retorna 502 SU
   assert.equal(data.ok, undefined);
   assert.equal(data.code, "SUPABASE_ERROR");
   assert.ok(data.error.includes("Error interno del CRM"));
+});
+
+test("75. Fallo de consulta de idempotencia en Supabase responde con HTTP 502 y NO intenta insertar el pedido (fail-closed)", async () => {
+  let insertAttempted = false;
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      // Simula fallo en la primera lectura de verificación de idempotencia
+      if (opts?.method !== "POST" && u.includes("confirmation_key=eq.")) {
+        return new Response(JSON.stringify({ code: "500", message: "Supabase connection reset" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      if (opts?.method === "POST") {
+        insertAttempted = true;
+        return new Response(JSON.stringify([{ id: "should-not-reach" }]), { status: 201 });
+      }
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Tocino", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "cash",
+      customer_phone: "+5216623357058",
+      idempotency_key: "idem-read-fail-test"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 502);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, undefined);
+  assert.equal(data.code, "SUPABASE_ERROR");
+  // Asegura que NO se intentó insertar el pedido
+  assert.equal(insertAttempted, false);
+});
+
+test("76. Fallo en consulta de deduplicación por ráfaga responde con HTTP 502 y NO inserta el pedido", async () => {
+  let insertAttempted = false;
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      // La verificación de clave pasa vacía
+      if (opts?.method !== "POST" && u.includes("confirmation_key=eq.")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      // La verificación por ráfaga (burst) falla
+      if (opts?.method !== "POST" && u.includes("order=created_at.desc")) {
+        return new Response(JSON.stringify({ code: "500", message: "Supabase burst timeout" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      if (opts?.method === "POST") {
+        insertAttempted = true;
+        return new Response(JSON.stringify([{ id: "should-not-reach" }]), { status: 201 });
+      }
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Tocino", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "cash",
+      customer_phone: "+5216623357058",
+      idempotency_key: "idem-burst-fail-test"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 502);
+  assert.equal(insertAttempted, false);
+});
+
+test("77. Fallo de persistencia en insert (representación vacía de Supabase) nunca devuelve confirmación", async () => {
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        // Simula que la inserción no devolvió el registro insertado
+        return new Response(JSON.stringify([]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Tocino", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "cash",
+      customer_phone: "+5216623357058",
+      idempotency_key: "idem-empty-rep-test"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 502);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, undefined);
+  assert.equal(data.code, "ORDER_PERSISTENCE_FAILED");
+});
+
+test("78. Pedido con tarjeta rechazado con HTTP 400 CARD_PAYMENTS_DISABLED cuando ENABLE_CARD_PAYMENTS no está activo (esquema vivo)", async () => {
+  let insertAttempted = false;
+  const envCardDisabled: Env = { ...testEnv, ENABLE_CARD_PAYMENTS: "false" };
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders") && opts?.method === "POST") {
+      insertAttempted = true;
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Tocino", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "card",
+      customer_phone: "+5216623357058"
+    })
+  });
+
+  const res = await handleRequest(req, envCardDisabled, mockFetch);
+  assert.equal(res.status, 400);
+  const data = (await res.json()) as any;
+  assert.equal(data.ok, false);
+  assert.equal(data.code, "CARD_PAYMENTS_DISABLED");
+  assert.ok(data.error.includes("tarjeta no está activo en el esquema actual"));
+  assert.equal(insertAttempted, false, "No debe intentar insertar en la tabla orders");
+});
+
+test("79. Efectivo no requiere comprobante y transferencia permanece pending_verification", async () => {
+  const dbOrders: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // 1. Efectivo
+  const reqCash = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "cash",
+      customer_phone: "+5216621111111"
+    })
+  });
+  const resCash = await handleRequest(reqCash, testEnv, mockFetch);
+  assert.equal(resCash.status, 200);
+  const dataCash = (await resCash.json()) as any;
+  assert.equal(dataCash.ok, true);
+  assert.equal(dataCash.payment_status, "pending");
+
+  // 2. Transferencia
+  const reqTransfer = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "transfer",
+      customer_phone: "+5216622222222"
+    })
+  });
+  const resTransfer = await handleRequest(reqTransfer, testEnv, mockFetch);
+  assert.equal(resTransfer.status, 200);
+  const dataTransfer = (await resTransfer.json()) as any;
+  assert.equal(dataTransfer.ok, true);
+  assert.equal(dataTransfer.payment_status, "pending_verification");
+});
+
+test("80. GET /api/notifications carga notificaciones exitosamente sin marcarlas como leídas automáticamente", async () => {
+  const ownerCookie = await makeCookie("owner");
+  const notificationsSeeded = [
+    {
+      id: "notif-001",
+      business_id: TEST_BUSINESS_ID,
+      title: "Comprobante recibido",
+      message: "Validar transferencia #MB-001",
+      type: "transfer_validation",
+      state: "pending",
+      created_at: new Date().toISOString()
+    },
+    {
+      id: "notif-002",
+      business_id: TEST_BUSINESS_ID,
+      title: "Pedido confirmado",
+      message: "Preparar comanda #MB-002",
+      type: "order_confirmed",
+      state: "pending",
+      created_at: new Date().toISOString()
+    },
+    {
+      id: "notif-003",
+      business_id: TEST_BUSINESS_ID,
+      title: "Atención humana solicitada",
+      message: "Cliente solicita operador",
+      type: "human_handoff",
+      state: "pending",
+      created_at: new Date().toISOString()
+    }
+  ];
+
+  let readMarked = false;
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_sessions")) {
+      const match = u.match(/id=eq\.([^&]+)/);
+      const sess = match ? inMemorySessions.get(match[1]) : null;
+      return new Response(JSON.stringify(sess ? [sess] : []), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_memberships")) {
+      return new Response(
+        JSON.stringify([{ business_id: TEST_BUSINESS_ID, role: "owner", active: true, can_validate_transfers: true }]),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/rest/v1/crm_notifications")) {
+      return new Response(JSON.stringify(notificationsSeeded), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_notification_reads")) {
+      if (opts?.method === "POST") readMarked = true;
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/notifications", {
+    method: "GET",
+    headers: { Cookie: ownerCookie }
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.equal(data.notifications.length, 3);
+  // Las notificaciones deben conservar read: false y NO insertarse en notification_reads automáticamente
+  assert.equal(data.notifications[0].read, false);
+  assert.equal(data.notifications[1].read, false);
+  assert.equal(data.notifications[2].read, false);
+  assert.equal(readMarked, false, "No debe marcarse como leída en la consulta inicial");
+});
+
+test("81. GET /api/notifications con lista vacía devuelve 200 con notifications: []", async () => {
+  const ownerCookie = await makeCookie("owner");
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_sessions")) {
+      const match = u.match(/id=eq\.([^&]+)/);
+      const sess = match ? inMemorySessions.get(match[1]) : null;
+      return new Response(JSON.stringify(sess ? [sess] : []), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_memberships")) {
+      return new Response(
+        JSON.stringify([{ business_id: TEST_BUSINESS_ID, role: "owner", active: true }]),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/rest/v1/crm_notifications")) {
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/notifications", {
+    method: "GET",
+    headers: { Cookie: ownerCookie }
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+  assert.deepEqual(data.notifications, []);
+});
+
+test("82. GET /api/notifications maneja fallo de Supabase con 502 NOTIFICATIONS_FETCH_ERROR", async () => {
+  const ownerCookie = await makeCookie("owner");
+  const mockFetch: typeof fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_sessions")) {
+      const match = u.match(/id=eq\.([^&]+)/);
+      const sess = match ? inMemorySessions.get(match[1]) : null;
+      return new Response(JSON.stringify(sess ? [sess] : []), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_memberships")) {
+      return new Response(
+        JSON.stringify([{ business_id: TEST_BUSINESS_ID, role: "owner", active: true }]),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/rest/v1/crm_notifications")) {
+      return new Response(JSON.stringify({ code: "500", message: "Database connection failed" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/notifications", {
+    method: "GET",
+    headers: { Cookie: ownerCookie }
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 502);
+  const data = (await res.json()) as any;
+  assert.equal(data.code, "NOTIFICATIONS_FETCH_ERROR");
+});
+
+test("83. Menú CRUD completo: crear, validar duplicados, editar y baja lógica (soft delete)", async () => {
+  const ownerCookie = await makeCookie("owner");
+  const menuDb: any[] = [
+    { sku: "hamb-tocino", name: "Tocino", category: "Hamburguesas", price_cents: 13500, description: "Con tocino", active: true }
+  ];
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/crm_sessions")) {
+      const match = u.match(/id=eq\.([^&]+)/);
+      const sess = match ? inMemorySessions.get(match[1]) : null;
+      return new Response(JSON.stringify(sess ? [sess] : []), { status: 200 });
+    }
+    if (u.includes("/rest/v1/crm_memberships")) {
+      return new Response(
+        JSON.stringify([{ business_id: TEST_BUSINESS_ID, role: "owner", active: true }]),
+        { status: 200 }
+      );
+    }
+    if (u.includes("/rest/v1/menu_products")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        menuDb.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      if (opts?.method === "PATCH") {
+        const matchSku = u.match(/sku=eq\.([^&]+)/);
+        const body = JSON.parse(String(opts.body));
+        const item = menuDb.find(m => m.sku === matchSku?.[1]);
+        if (item) {
+          Object.assign(item, body);
+          return new Response(JSON.stringify([item]), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      // Query check for sku
+      const matchSku = u.match(/sku=eq\.([^&]+)/);
+      if (matchSku) {
+        const found = menuDb.filter(m => m.sku === matchSku[1]);
+        return new Response(JSON.stringify(found), { status: 200 });
+      }
+      return new Response(JSON.stringify(menuDb), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // 1. Alta de nuevo producto exitosa
+  const reqCreate = new Request("https://crm.local/api/menu", {
+    method: "POST",
+    headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sku: "hamb-suprema",
+      name: "Suprema Burger",
+      category: "Hamburguesas",
+      price_cents: 15500,
+      description: "Doble carne y queso"
+    })
+  });
+  const resCreate = await handleRequest(reqCreate, testEnv, mockFetch);
+  assert.equal(resCreate.status, 201);
+  const dataCreate = (await resCreate.json()) as any;
+  assert.equal(dataCreate.ok, true);
+  assert.equal(dataCreate.product.sku, "hamb-suprema");
+
+  // 2. Intento de alta con SKU duplicado es rechazado con 409
+  const reqDup = new Request("https://crm.local/api/menu", {
+    method: "POST",
+    headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sku: "hamb-suprema",
+      name: "Suprema Otra",
+      category: "Hamburguesas",
+      price_cents: 16000
+    })
+  });
+  const resDup = await handleRequest(reqDup, testEnv, mockFetch);
+  assert.equal(resDup.status, 409);
+  const dataDup = (await resDup.json()) as any;
+  assert.equal(dataDup.code, "DUPLICATE_SKU");
+
+  // 3. Edición de producto (PATCH /api/menu/:sku)
+  const reqEdit = new Request("https://crm.local/api/menu/hamb-suprema", {
+    method: "PATCH",
+    headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Suprema Burger Deluxe",
+      price_cents: 16500
+    })
+  });
+  const resEdit = await handleRequest(reqEdit, testEnv, mockFetch);
+  assert.equal(resEdit.status, 200);
+  const dataEdit = (await resEdit.json()) as any;
+  assert.equal(dataEdit.product.name, "Suprema Burger Deluxe");
+  assert.equal(dataEdit.product.price_cents, 16500);
+
+  // 4. Baja lógica (DELETE /api/menu/:sku)
+  const reqDelete = new Request("https://crm.local/api/menu/hamb-suprema", {
+    method: "DELETE",
+    headers: { Cookie: ownerCookie }
+  });
+  const resDelete = await handleRequest(reqDelete, testEnv, mockFetch);
+  assert.equal(resDelete.status, 200);
+  const dataDelete = (await resDelete.json()) as any;
+  assert.equal(dataDelete.ok, true);
+  assert.equal(dataDelete.deleted, true);
+  assert.equal(dataDelete.soft_delete, true);
+  assert.equal(dataDelete.product.active, false);
+
+  // 5. Baja de producto inexistente devuelve 404
+  const reqNotFound = new Request("https://crm.local/api/menu/sku-inexistente", {
+    method: "DELETE",
+    headers: { Cookie: ownerCookie }
+  });
+  const resNotFound = await handleRequest(reqNotFound, testEnv, mockFetch);
+  assert.equal(resNotFound.status, 404);
 });

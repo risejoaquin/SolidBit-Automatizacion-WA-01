@@ -297,6 +297,53 @@
   </div>
 </div>
 
+<!-- Modal para editar producto del menú -->
+<div id="modal-edit-product" class="modal-backdrop" style="display: none;" hidden>
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="edit-modal-title">Editar Producto del Menú</h3>
+      <button type="button" id="modal-edit-close" class="btn-close" aria-label="Cerrar modal">×</button>
+    </div>
+    <form id="edit-product-form">
+      <div class="modal-body">
+        <div class="form-grid">
+          <label>Código SKU (identificador)
+            <input name="sku" id="edit-sku" type="text" readonly class="input-readonly">
+          </label>
+          <label>Categoría
+            <select name="category" id="edit-category" required>
+              <option value="Hamburguesas">Hamburguesas</option>
+              <option value="Combos">Combos</option>
+              <option value="Complementos">Complementos</option>
+              <option value="Bebidas">Bebidas</option>
+              <option value="Postres">Postres</option>
+            </select>
+          </label>
+          <label>Nombre del producto
+            <input name="name" id="edit-name" type="text" required maxlength="200">
+          </label>
+          <label>Precio en pesos ($ MXN)
+            <input name="price" id="edit-price" type="number" step="1" min="0" required>
+          </label>
+        </div>
+        <label>Descripción detallada
+          <textarea name="description" id="edit-desc" rows="2"></textarea>
+        </label>
+        <div style="margin-top:10px;">
+          <label class="checkbox-label">
+            <input name="active" id="edit-active" type="checkbox">
+            <span>Activo para venta inmediata en WhatsApp</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="modal-edit-cancel" class="btn-secondary">Cancelar</button>
+        <button type="submit" class="btn-primary">Guardar Cambios</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 </main>
 <script src="/remote-app.js"></script>
 </body>

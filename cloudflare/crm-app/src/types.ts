@@ -7,6 +7,7 @@ export interface Env {
   KAPSO_WORKER_EMBED_APPROVED?: string;
   ENABLE_SUPABASE_SYNC?: string;
   ENABLE_KAPSO_HANDOFF_NOTICES?: string;
+  ENABLE_CARD_PAYMENTS?: string;
   WORKER_VERSION?: string;
   COMMIT_SHA?: string;
   ENVIRONMENT?: string;

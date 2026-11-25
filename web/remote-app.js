@@ -50,6 +50,7 @@ function handleSessionExpired(noticeText) {
   // Immediate DOM purge of all sensitive views
   purgeAuthenticatedViews();
   closeReceiptModal();
+  closeEditProductModal();
 
   if ($("session-loading")) $("session-loading").hidden = true;
   $("login-panel").hidden = false;
@@ -197,9 +198,38 @@ const notifPanel = $("notif-panel");
 if (notifBell && notifPanel) {
   notifBell.onclick = () => {
     notifPanel.hidden = !notifPanel.hidden;
-    if (!notifPanel.hidden) loadNotifications(true);
+    if (!notifPanel.hidden) {
+      if (cachedNotifications && cachedNotifications.length > 0) {
+        renderNotificationsList(cachedNotifications);
+      } else {
+        const list = $("notif-list");
+        if (list && !list.querySelector(".notif-item")) {
+          list.replaceChildren(node("div", "Cargando notificaciones…", "placeholder"));
+        }
+      }
+      loadNotifications(true);
+    }
   };
   $("notif-close").onclick = () => { notifPanel.hidden = true; };
+}
+
+function renderNotificationsError(errorMsg) {
+  const list = $("notif-list");
+  if (!list) return;
+  list.replaceChildren();
+  const box = node("div", "", "notif-error-box");
+  box.append(
+    node("p", errorMsg || "No se pudieron cargar las notificaciones.", "notif-error-msg"),
+    (() => {
+      const btn = node("button", "Reintentar", "btn-secondary btn-sm");
+      btn.onclick = () => {
+        list.replaceChildren(node("div", "Cargando notificaciones…", "placeholder"));
+        loadNotifications(true);
+      };
+      return btn;
+    })()
+  );
+  list.append(box);
 }
 
 async function loadNotifications(force = false) {
@@ -232,7 +262,11 @@ async function loadNotifications(force = false) {
     isInitialNotifLoad = false;
 
     if (!notifPanel.hidden || force) renderNotificationsList(notifications);
-  } catch {}
+  } catch (err) {
+    if (!notifPanel.hidden || force) {
+      renderNotificationsError(err?.message || "Error de conexión al cargar notificaciones.");
+    }
+  }
 }
 
 function renderNotificationsList(notifications) {
@@ -240,16 +274,25 @@ function renderNotificationsList(notifications) {
   if (!list) return;
   list.replaceChildren();
 
-  if (!notifications.length) {
+  if (!notifications || !notifications.length) {
     list.append(node("div", "No hay notificaciones recientes.", "placeholder"));
     return;
   }
 
   for (const n of notifications) {
     const item = node("div", "", "notif-item" + (!n.read ? " notif-unread" : ""));
-    const title = node("div", n.title, "notif-item-title");
-    const msg = node("div", n.message, "notif-item-msg");
-    const time = node("div", new Date(n.created_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }), "notif-item-time");
+    const title = node("div", n.title || "Notificación de Operación", "notif-item-title");
+    const msg = node("div", n.message || "", "notif-item-msg");
+    let timeStr = "";
+    if (n.created_at) {
+      try {
+        const d = new Date(n.created_at);
+        if (!isNaN(d.getTime())) {
+          timeStr = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+        }
+      } catch {}
+    }
+    const time = node("div", timeStr, "notif-item-time");
     item.append(title, msg, time);
 
     item.onclick = async () => {
@@ -949,13 +992,18 @@ function renderMenu() {
       // Description
       const desc = node("p", p.description || "Sin descripción adicional.", "menu-card-desc");
 
-      // Footer: SKU + Status + Toggle Button
+      // Footer: SKU + Status + Action Buttons (Toggle, Edit, Delete)
       const footer = node("div", "", "menu-card-footer");
       const leftInfo = node("div", "");
       leftInfo.append(
         node("span", p.sku, "badge-folio"),
         node("span", p.active ? "Activo" : "Inactivo", "badge " + (p.active ? "badge-delivered" : "badge-cancelled"))
       );
+
+      const actionBtns = node("div", "", "card-actions-group");
+      actionBtns.style.display = "flex";
+      actionBtns.style.gap = "6px";
+      actionBtns.style.alignItems = "center";
 
       const toggleBtn = node("button", p.active ? "Desactivar" : "Activar", "btn-secondary btn-sm");
       toggleBtn.onclick = async () => {
@@ -969,12 +1017,88 @@ function renderMenu() {
         }
       };
 
-      footer.append(leftInfo, toggleBtn);
+      const editBtn = node("button", "Editar", "btn-secondary btn-sm");
+      editBtn.onclick = () => openEditProductModal(p);
+
+      const deleteBtn = node("button", "Eliminar", "btn-danger btn-sm");
+      deleteBtn.onclick = async () => {
+        if (!confirm(`¿Deseas dar de baja lógica del menú el producto "${p.name}" (${p.sku})?`)) return;
+        try {
+          await api(`/api/menu/${p.sku}`, "DELETE");
+          p.active = false;
+          flash(`Producto "${p.name}" dado de baja lógica correctamente.`, "success");
+          renderMenu();
+        } catch (err) {
+          flash(err.message || "Error al eliminar producto");
+        }
+      };
+
+      actionBtns.append(toggleBtn, editBtn, deleteBtn);
+      footer.append(leftInfo, actionBtns);
       card.append(header, desc, footer);
       grid.append(card);
     }
     host.append(grid);
   }
+}
+
+function openEditProductModal(product) {
+  const modal = $("modal-edit-product");
+  if (!modal) return;
+  $("edit-sku").value = product.sku;
+  $("edit-name").value = product.name || "";
+  $("edit-category").value = product.category || "Hamburguesas";
+  $("edit-price").value = Math.round((Number(product.price_cents) || 0) / 100);
+  $("edit-desc").value = product.description || "";
+  $("edit-active").checked = Boolean(product.active);
+  modal.style.display = "flex";
+  modal.hidden = false;
+}
+
+function closeEditProductModal() {
+  const modal = $("modal-edit-product");
+  if (!modal) return;
+  modal.style.display = "none";
+  modal.hidden = true;
+}
+
+if ($("modal-edit-close")) $("modal-edit-close").onclick = closeEditProductModal;
+if ($("modal-edit-cancel")) $("modal-edit-cancel").onclick = closeEditProductModal;
+
+if ($("edit-product-form")) {
+  $("edit-product-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const sku = $("edit-sku").value;
+    const name = $("edit-name").value.trim();
+    const category = $("edit-category").value;
+    const priceVal = parseFloat($("edit-price").value);
+    const description = $("edit-desc").value.trim();
+    const active = $("edit-active").checked;
+
+    if (!name) {
+      flash("El nombre del producto es obligatorio");
+      return;
+    }
+    if (isNaN(priceVal) || priceVal < 0) {
+      flash("El precio debe ser un número positivo");
+      return;
+    }
+
+    try {
+      await api(`/api/menu/${sku}`, "PATCH", {
+        name,
+        category,
+        price_cents: Math.round(priceVal * 100),
+        description,
+        active
+      });
+      flash(`Producto "${name}" actualizado con éxito.`, "success");
+      closeEditProductModal();
+      await menu(true);
+    } catch (err) {
+      flash(err.message || "Error al actualizar producto");
+    }
+  };
 }
 
 // Loaders map
