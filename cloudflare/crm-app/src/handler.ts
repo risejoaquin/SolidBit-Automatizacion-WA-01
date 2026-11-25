@@ -962,10 +962,23 @@ export async function handleRequest(
       ? (totalItemsCount >= 15 ? "25 a 30 minutos" : "8 a 15 minutos")
       : (totalItemsCount >= 15 ? "35 a 45 minutos" : "25 minutos");
 
+    const orderFolio = order?.folio
+      ? (order.folio.startsWith("#") ? order.folio : `#${order.folio}`)
+      : `#MB-${String(order?.id || "000000").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`;
+
+    const transferDetails = paymentMethod === "transfer" ? {
+      bank: "BANCO DEMO",
+      holder: "MR. BURGER DEMO",
+      account_number: "1234 5678 9012 3456",
+      concept: orderFolio,
+      label: "CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR",
+      card_image_url: `${url.origin}/qa/tarjeta-destino-demo.png`
+    } : undefined;
+
     return jsonResponse(200, {
       ok: true,
       duplicate,
-      folio: order?.folio ? (order.folio.startsWith("#") ? order.folio : `#${order.folio}`) : `#MB-${String(order?.id || "000000").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`,
+      folio: orderFolio,
       order_id: order.id,
       order_status: order.order_status,
       payment_status: (paymentMethod === "transfer" || paymentMethod === "card") ? "pending_verification" : "pending",
@@ -974,7 +987,8 @@ export async function handleRequest(
       total_cents: order.total_cents || priced.total_cents,
       total_formatted: "$" + Math.round((order.total_cents || priced.total_cents) / 100),
       fulfillment,
-      estimated_time: estimatedTime
+      estimated_time: estimatedTime,
+      ...(transferDetails ? { transfer_details: transferDetails } : {})
     });
   }
 

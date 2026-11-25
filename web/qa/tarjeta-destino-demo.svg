@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Card Background -->
+  <rect x="20" y="20" width="760" height="460" rx="28" fill="url(#cardGrad)" stroke="#334155" stroke-width="2"/>
+
+  <!-- Decorative curves -->
+  <circle cx="700" cy="100" r="160" fill="none" stroke="#334155" stroke-width="1.5" opacity="0.3"/>
+  <circle cx="680" cy="120" r="200" fill="none" stroke="#334155" stroke-width="1.5" opacity="0.2"/>
+
+  <!-- Warning Banner at Top -->
+  <rect x="20" y="20" width="760" height="52" rx="28" fill="#dc2626" opacity="0.9"/>
+  <rect x="20" y="50" width="760" height="22" fill="#dc2626" opacity="0.9"/>
+  <text x="400" y="54" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" letter-spacing="2">
+    CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR
+  </text>
+
+  <!-- Bank Logo & Name -->
+  <text x="70" y="135" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="800" letter-spacing="3">
+    BANCO DEMO
+  </text>
+  <text x="730" y="135" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="600" text-anchor="end">
+    TRANSFERENCIA QA
+  </text>
+
+  <!-- EMV Chip -->
+  <rect x="70" y="175" width="70" height="52" rx="10" fill="url(#goldGrad)"/>
+  <rect x="82" y="190" width="46" height="22" rx="4" fill="none" stroke="#78350f" stroke-width="1.5"/>
+  <line x1="70" y1="201" x2="140" y2="201" stroke="#78350f" stroke-width="1.5"/>
+
+  <!-- Contactless Icon -->
+  <path d="M175,185 A20,20 0 0,1 175,215 M185,178 A30,30 0 0,1 185,222 M195,171 A40,40 0 0,1 195,229" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Card Number -->
+  <text x="70" y="285" fill="#ffffff" font-family="'Courier New', Courier, monospace" font-size="42" font-weight="bold" letter-spacing="6">
+    1234  5678  9012  3456
+  </text>
+
+  <!-- Labels -->
+  <text x="70" y="340" fill="#64748b" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-transform="uppercase" letter-spacing="1.5">
+    TITULAR DE LA CUENTA
+  </text>
+  <text x="70" y="375" fill="#f1f5f9" font-family="system-ui, -apple-system, sans-serif" font-size="26" font-weight="700" letter-spacing="1.5">
+    MR. BURGER DEMO
+  </text>
+
+  <text x="540" y="340" fill="#64748b" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-transform="uppercase" letter-spacing="1.5">
+    CONCEPTO / REFERENCIA
+  </text>
+  <text x="540" y="375" fill="#38bdf8" font-family="'Courier New', Courier, monospace" font-size="24" font-weight="bold">
+    FOLIO DEL PEDIDO
+  </text>
+
+  <!-- Bottom Caution Note -->
+  <rect x="60" y="415" width="680" height="40" rx="10" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="400" y="440" fill="#fbbf24" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="600" text-anchor="middle">
+    USO EXCLUSIVO EN AMBIENTE DE PRUEBAS SOLIDBIT — ADJUNTAR COMPROBANTE FICTICIO
+  </text>
+</svg>

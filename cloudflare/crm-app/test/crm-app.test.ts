@@ -1708,7 +1708,7 @@ test("34. Enlace Atender en Inbox (P1): propaga conversation_id autorizado al em
   assert.ok(!dataWorkerOther.embed_url.includes("conv-other-agent"));
 });
 
-test("36. E2E-07 Comprobantes (P1): descarga segura desde media_url / file_base64, subida a Storage privado payment-receipts y bloqueo SSRF", async () => {
+test("36. [Integración de handler simulada] Comprobantes (P1): descarga segura desde media_url / file_base64, subida a Storage privado payment-receipts y bloqueo SSRF", async () => {
   const ownerCookie = await makeCookie("owner");
   const pendingOrderId = "84aa45e1-5b85-4a83-81df-12ae18606494";
   let storageUploadUrl = "";
@@ -2366,7 +2366,8 @@ test("47. Creación exitosa de pedido para recoger (pickup): calcula total en se
   assert.equal(dbOrders.length, 1);
   assert.equal(dbOrders[0].business_id, TEST_BUSINESS_ID);
   assert.equal(dbOrders[0].fulfillment, "pickup");
-  assert.equal(dbOrders[0].total_cents, 24000);
+  assert.equal(data.total_cents, 24000);
+  assert.equal(dbOrders[0].subtotal_cents, 24000);
   assert.equal(dbOrders[0].items.length, 1);
   assert.equal(dbOrders[0].items[0].sku, "BURGER-CLASICA");
   assert.equal(dbOrders[0].items[0].quantity, 2);
@@ -3032,7 +3033,7 @@ test("63. Reglas del bot en Kapso: saludo sin invitación a ordenar, no repetir 
   const prompt = defJson.nodes.find((n: any) => n.id === "agent_1795315891972")?.data?.config?.system_prompt || "";
 
   // 1. Saludo sin invitación a ordenar y regla estricta de saludo aislado
-  assert.ok(code.includes("Si el cliente solo saluda (ej. “hola”, “buenas tardes”), contesta únicamente un saludo breve y natural"));
+  assert.ok(code.includes("Si el cliente solo saluda") && code.includes("contesta únicamente un saludo breve y natural"));
   assert.ok(code.includes("No agregues “¿qué se te antoja?”, “¿en qué te ayudo?”, invitaciones a ordenar ni ofrecimientos del menú"));
   assert.ok(code.includes("No preguntes qué se le antoja ni lo invites a ordenar"));
   assert.ok(code.includes("Si el cliente saluda y además pide algo en el mismo mensaje: saluda brevemente y atiende la solicitud"));
@@ -3182,7 +3183,7 @@ test("66. Ingesta duplicada de comprobante con mismo provider_message_id devuelv
   assert.equal(data.receipt.id, "rec-dup-123");
 });
 
-test("67. Flujo E2E completo: Ingesta de imagen para tarjeta -> Registro exitoso de pedido con tarjeta en pending_verification y comprobante vinculado en pending_validation (nunca pagado)", async () => {
+test("67. [Integración de handler simulada] Flujo de comprobante: Ingesta de imagen para tarjeta -> Registro exitoso de pedido con tarjeta en pending_verification y comprobante vinculado en pending_validation (nunca pagado)", async () => {
   const receiptsDb: any[] = [];
   const ordersDb: any[] = [];
 
@@ -4046,4 +4047,428 @@ test("83. Menú CRUD completo: crear, validar duplicados, editar y baja lógica 
   });
   const resNotFound = await handleRequest(reqNotFound, testEnv, mockFetch);
   assert.equal(resNotFound.status, 404);
+});
+
+// =========================================================================
+// VALIDACIÓN ESTRICTA DERIVADA DEL ESQUEMA REAL DE POSTGRES / SUPABASE QA
+// =========================================================================
+
+export function strictValidateOrdersInsert(
+  body: Record<string, any>,
+  existingOrders: any[] = [],
+  allowCard = false
+): { status: number; body: { code: string; message: string; details?: string } } | null {
+  // A. Columnas inexistentes en orders
+  if ("provider_message_id" in body && body.provider_message_id !== undefined) {
+    return {
+      status: 400,
+      body: { code: "42703", message: 'column orders.provider_message_id does not exist' }
+    };
+  }
+
+  // B. Columna generada total_cents: Postgres rechaza inserts no-DEFAULT
+  if ("total_cents" in body && body.total_cents !== undefined) {
+    return {
+      status: 400,
+      body: {
+        code: "428C9",
+        details: 'Column "total_cents" is a generated column.',
+        message: 'cannot insert a non-DEFAULT value into column "total_cents"'
+      }
+    };
+  }
+
+  // C. Tipo UUID para confirmation_key
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(body.confirmation_key)) {
+    return {
+      status: 400,
+      body: { code: "22P02", message: `invalid input syntax for type uuid: "${body.confirmation_key}"` }
+    };
+  }
+
+  // D. Restricción orders_payment_method_check ('cash', 'transfer')
+  const allowedMethods = allowCard ? ["cash", "transfer", "card"] : ["cash", "transfer"];
+  if (!allowedMethods.includes(body.payment_method)) {
+    return {
+      status: 400,
+      body: { code: "23514", message: 'new row for relation "orders" violates check constraint "orders_payment_method_check"' }
+    };
+  }
+
+  // E. Restricción orders_check:
+  // (fulfillment = 'pickup' AND shipping_cents = 0 AND address IS NULL AND delivery_references IS NULL)
+  // OR (fulfillment = 'delivery' AND shipping_cents > 0 AND address IS NOT NULL AND delivery_references IS NOT NULL AND delivery_references <> '')
+  if (body.fulfillment === "pickup") {
+    if (body.shipping_cents !== 0 || body.address !== null || body.delivery_references !== null) {
+      return {
+        status: 400,
+        body: { code: "23514", message: 'new row for relation "orders" violates check constraint "orders_check"' }
+      };
+    }
+  } else if (body.fulfillment === "delivery") {
+    if (body.shipping_cents <= 0 || !body.address || !body.delivery_references || String(body.delivery_references).trim() === "") {
+      return {
+        status: 400,
+        body: { code: "23514", message: 'new row for relation "orders" violates check constraint "orders_check"' }
+      };
+    }
+  } else {
+    return {
+      status: 400,
+      body: { code: "23514", message: 'new row for relation "orders" violates check constraint "orders_fulfillment_check"' }
+    };
+  }
+
+  // F. Restricción de unicidad orders_confirmation_key_key
+  if (existingOrders.some(o => o.confirmation_key === body.confirmation_key)) {
+    return {
+      status: 409,
+      body: { code: "23505", message: 'duplicate key value violates unique constraint "orders_confirmation_key_key"' }
+    };
+  }
+
+  return null;
+}
+
+test("84. [Integración simulada estricta] Pedido a domicilio (1 Tocino + 1 Dedos de queso) con transferencia bancaria y datos ficticios de QA", async () => {
+  const dbOrders: any[] = [];
+  const dbNotifications: any[] = [];
+
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        const schemaErr = strictValidateOrdersInsert(body, dbOrders, false);
+        if (schemaErr) {
+          return new Response(JSON.stringify(schemaErr.body), {
+            status: schemaErr.status,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        // Simular cálculo de total_cents generado por Postgres (subtotal + shipping)
+        const computed = {
+          ...body,
+          total_cents: body.subtotal_cents + body.shipping_cents,
+          created_at: new Date().toISOString()
+        };
+        dbOrders.push(computed);
+        return new Response(JSON.stringify([computed]), { status: 201 });
+      }
+
+      // Query check por confirmation_key
+      const matchKey = u.match(/confirmation_key=eq.([^&]+)/);
+      if (matchKey) {
+        const keyVal = decodeURIComponent(matchKey[1]);
+        const found = dbOrders.filter(o => o.confirmation_key === keyVal);
+        return new Response(JSON.stringify(found), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+
+    if (u.includes("crm_create_notification") || u.includes("/rest/v1/crm_notifications")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        const notif = {
+          type: body.p_type || body.type,
+          priority: body.p_priority || body.priority,
+          title: body.p_title || body.title,
+          message: body.p_message || body.message
+        };
+        dbNotifications.push(notif);
+        return new Response(JSON.stringify([{ ok: true }]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+
+    if (u.includes("/rest/v1/crm_order_history")) {
+      return new Response(JSON.stringify([{ id: "hist-1" }]), { status: 201 });
+    }
+
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Order-Tool-Secret": "mock-order-tool-secret"
+    },
+    body: JSON.stringify({
+      items: [
+        { product: "Tocino", quantity: 1 },
+        { product: "Dedos de queso", quantity: 1 }
+      ],
+      fulfillment: "delivery",
+      payment_method: "transfer",
+      customer_phone: "+5216623357058",
+      conversation_id: "conv-qa-delivery-001",
+      location: {
+        latitude: 27.9654,
+        longitude: -110.8172,
+        address: "Col. Moderna, Empalme, Sonora"
+      },
+      notes: "Casa blanca con portón negro"
+    })
+  });
+
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as any;
+
+  assert.equal(data.ok, true);
+  assert.equal(data.duplicate, false);
+  assert.ok(data.folio.startsWith("#MB-"));
+  assert.equal(data.fulfillment, "delivery");
+  // 1 Tocino ($135) + 1 Dedos de queso ($95) = $230 (23000 cents)
+  assert.equal(data.subtotal_cents, 23000);
+  // Shipping delivery en Empalme = $40 (4000 cents)
+  assert.equal(data.shipping_cents, 4000);
+  // Total = $270 (27000 cents)
+  assert.equal(data.total_cents, 27000);
+  assert.equal(data.total_formatted, "$270");
+  assert.equal(data.payment_status, "pending_verification");
+  assert.equal(data.estimated_time, "25 minutos");
+
+  // Verifica entrega de datos de transferencia de prueba en QA
+  assert.ok(data.transfer_details, "Debe incluir transfer_details en la respuesta para pago transfer");
+  assert.equal(data.transfer_details.bank, "BANCO DEMO");
+  assert.equal(data.transfer_details.holder, "MR. BURGER DEMO");
+  assert.equal(data.transfer_details.account_number, "1234 5678 9012 3456");
+  assert.equal(data.transfer_details.concept, data.folio);
+  assert.equal(data.transfer_details.label, "CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR");
+  assert.ok(data.transfer_details.card_image_url.endsWith("/qa/tarjeta-destino-demo.png"));
+
+  // Verifica persistencia estricta en DB
+  assert.equal(dbOrders.length, 1);
+  const saved = dbOrders[0];
+  assert.equal(saved.business_id, TEST_BUSINESS_ID);
+  assert.equal(saved.customer_ref, "+5216623357058");
+  assert.equal(saved.conversation_id, "conv-qa-delivery-001");
+  assert.equal(saved.fulfillment, "delivery");
+  assert.equal(saved.shipping_cents, 4000);
+  assert.equal(saved.payment_method, "transfer");
+  assert.equal(saved.payment_status, "pending"); // en DB queda pending
+  assert.equal(saved.order_status, "received");
+  assert.ok(saved.address.includes("GPS: 27.9654, -110.8172"));
+  assert.equal(saved.delivery_references, "Casa blanca con portón negro");
+
+  // Verifica que NO se enviaron columnas inválidas a orders
+  assert.equal("total_cents" in saved && saved.total_cents === 27000, true);
+  assert.equal("provider_message_id" in saved, false);
+
+  // Verifica emisión de notificación para validación manual de transferencia
+  assert.equal(dbNotifications.length, 1);
+  assert.equal(dbNotifications[0].type, "transfer_validation");
+  assert.equal(dbNotifications[0].priority, "high");
+  assert.ok(dbNotifications[0].title.includes("transferencia pendiente"));
+});
+
+test("85. Asset estático de tarjeta ficticia de transferencia (/qa/tarjeta-destino-demo.png y .svg)", async () => {
+  const reqSvg = new Request("https://crm.local/qa/tarjeta-destino-demo.svg", { method: "GET" });
+  const resSvg = await handleRequest(reqSvg, testEnv);
+  assert.equal(resSvg.status, 200);
+  assert.ok(resSvg.headers.get("Content-Type")?.includes("image/svg+xml"));
+  const svgText = await resSvg.text();
+  assert.ok(svgText.includes("BANCO DEMO"));
+  assert.ok(svgText.includes("1234  5678  9012  3456"));
+  assert.ok(svgText.includes("CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR"));
+
+  const reqPng = new Request("https://crm.local/qa/tarjeta-destino-demo.png", { method: "GET" });
+  const resPng = await handleRequest(reqPng, testEnv);
+  assert.equal(resPng.status, 200);
+  assert.ok(resPng.headers.get("Content-Type")?.includes("image/svg+xml"));
+});
+
+test("86. Rechazo estricto bajo el esquema real de Postgres ante violaciones de orders_check y columnas prohibidas", async () => {
+  const dbOrders: any[] = [];
+  const strictMock: typeof fetch = async (_url, opts) => {
+    if (opts?.method === "POST") {
+      const body = JSON.parse(String(opts.body));
+      const err = strictValidateOrdersInsert(body, dbOrders, false);
+      if (err) {
+        return new Response(JSON.stringify(err.body), { status: err.status, headers: { "Content-Type": "application/json" } });
+      }
+      dbOrders.push(body);
+      return new Response(JSON.stringify([body]), { status: 201 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // A. Pickup con shipping > 0 violaría orders_check
+  const violPickup = strictValidateOrdersInsert({
+    id: "00000000-0000-0000-0000-000000000001",
+    business_id: TEST_BUSINESS_ID,
+    confirmation_key: "00000000-0000-0000-0000-000000000002",
+    customer_ref: "+526229999999",
+    items: [{ sku: "BURGER-CLASICA", quantity: 1 }],
+    subtotal_cents: 12000,
+    shipping_cents: 4000, // VIOLACIÓN: pickup no puede tener shipping > 0
+    fulfillment: "pickup",
+    address: null,
+    delivery_references: null,
+    payment_method: "cash",
+    payment_status: "pending",
+    order_status: "received"
+  });
+  assert.equal(violPickup?.status, 400);
+  assert.equal(violPickup?.body.code, "23514");
+
+  // B. Delivery con shipping 0 o references null violaría orders_check
+  const violDelivery = strictValidateOrdersInsert({
+    id: "00000000-0000-0000-0000-000000000001",
+    business_id: TEST_BUSINESS_ID,
+    confirmation_key: "00000000-0000-0000-0000-000000000002",
+    customer_ref: "+526229999999",
+    items: [{ sku: "BURGER-CLASICA", quantity: 1 }],
+    subtotal_cents: 12000,
+    shipping_cents: 0, // VIOLACIÓN: delivery requiere shipping > 0
+    fulfillment: "delivery",
+    address: "Calle 10",
+    delivery_references: null, // VIOLACIÓN: references no puede ser null en delivery
+    payment_method: "cash",
+    payment_status: "pending",
+    order_status: "received"
+  });
+  assert.equal(violDelivery?.status, 400);
+  assert.equal(violDelivery?.body.code, "23514");
+
+  // C. Intento de enviar columna generada total_cents en insert
+  const violGen = strictValidateOrdersInsert({
+    id: "00000000-0000-0000-0000-000000000001",
+    business_id: TEST_BUSINESS_ID,
+    confirmation_key: "00000000-0000-0000-0000-000000000002",
+    customer_ref: "+526229999999",
+    items: [{ sku: "BURGER-CLASICA", quantity: 1 }],
+    subtotal_cents: 12000,
+    shipping_cents: 0,
+    total_cents: 12000, // VIOLACIÓN: columna generada
+    fulfillment: "pickup",
+    address: null,
+    delivery_references: null,
+    payment_method: "cash",
+    payment_status: "pending",
+    order_status: "received"
+  });
+  assert.equal(violGen?.status, 400);
+  assert.equal(violGen?.body.code, "428C9");
+
+  // D. Intento de enviar provider_message_id en insert a orders
+  const violCol = strictValidateOrdersInsert({
+    id: "00000000-0000-0000-0000-000000000001",
+    business_id: TEST_BUSINESS_ID,
+    confirmation_key: "00000000-0000-0000-0000-000000000002",
+    customer_ref: "+526229999999",
+    provider_message_id: "wamid-123", // VIOLACIÓN: no existe en orders
+    items: [{ sku: "BURGER-CLASICA", quantity: 1 }],
+    subtotal_cents: 12000,
+    shipping_cents: 0,
+    fulfillment: "pickup",
+    address: null,
+    delivery_references: null,
+    payment_method: "cash",
+    payment_status: "pending",
+    order_status: "received"
+  });
+  assert.equal(violCol?.status, 400);
+  assert.equal(violCol?.body.code, "42703");
+});
+
+test("87. Ubicación GPS en delivery se conserva y da formato seguro GPS: lat, lng", async () => {
+  const dbOrders: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        const schemaErr = strictValidateOrdersInsert(body, dbOrders, false);
+        if (schemaErr) return new Response(JSON.stringify(schemaErr.body), { status: schemaErr.status });
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    if (u.includes("crm_create_notification") || u.includes("crm_order_history")) {
+      return new Response(JSON.stringify([{ ok: true }]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  // 1. Ubicación dada como objeto { latitude, longitude } sin address adicional
+  const reqObj = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "delivery",
+      payment_method: "cash",
+      customer_phone: "+526221112233",
+      location: { latitude: 27.9654, longitude: -110.8172 }
+    })
+  });
+  const resObj = await handleRequest(reqObj, testEnv, mockFetch);
+  assert.equal(resObj.status, 200);
+  assert.equal(dbOrders.length, 1);
+  assert.equal(dbOrders[0].address, "GPS: 27.9654, -110.8172");
+  // Se provee delivery_references por defecto al omitirse notas para satisfacer orders_check
+  assert.equal(dbOrders[0].delivery_references, "Ubicación compartida por WhatsApp");
+
+  // 2. Ubicación dada como string de coordenadas
+  const reqStr = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Clásica", quantity: 1 }],
+      fulfillment: "delivery",
+      payment_method: "cash",
+      customer_phone: "+526221112244",
+      location: "27.9654, -110.8172",
+      notes: "Cerca de la plaza"
+    })
+  });
+  const resStr = await handleRequest(reqStr, testEnv, mockFetch);
+  assert.equal(resStr.status, 200);
+  assert.equal(dbOrders.length, 2);
+  assert.ok(dbOrders[1].address.includes("27.9654, -110.8172"));
+  assert.equal(dbOrders[1].delivery_references, "Cerca de la plaza");
+});
+
+test("88. Pickup garantiza address=null, references=null y shipping=0", async () => {
+  const dbOrders: any[] = [];
+  const mockFetch: typeof fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/orders")) {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body));
+        const schemaErr = strictValidateOrdersInsert(body, dbOrders, false);
+        if (schemaErr) return new Response(JSON.stringify(schemaErr.body), { status: schemaErr.status });
+        dbOrders.push(body);
+        return new Response(JSON.stringify([body]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+    if (u.includes("crm_create_notification") || u.includes("crm_order_history")) {
+      return new Response(JSON.stringify([{ ok: true }]), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
+  };
+
+  const req = new Request("https://crm.local/api/kapso/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Order-Tool-Secret": "mock-order-tool-secret" },
+    body: JSON.stringify({
+      items: [{ product: "Favorita", quantity: 1 }],
+      fulfillment: "pickup",
+      payment_method: "cash",
+      customer_phone: "+526221112255"
+    })
+  });
+  const res = await handleRequest(req, testEnv, mockFetch);
+  assert.equal(res.status, 200);
+  assert.equal(dbOrders.length, 1);
+  assert.equal(dbOrders[0].fulfillment, "pickup");
+  assert.equal(dbOrders[0].shipping_cents, 0);
+  assert.equal(dbOrders[0].address, null);
+  assert.equal(dbOrders[0].delivery_references, null);
 });

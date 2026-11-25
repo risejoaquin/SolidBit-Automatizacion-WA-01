@@ -467,7 +467,7 @@ test("20. Concurrencia de solicitudes sobre el mismo evento", async () => {
   assert.ok(data1.duplicate || data2.duplicate);
 });
 
-test("21. E2E-07 Webhook Media Receipt: descarga comprobante de WhatsApp/Kapso, sube a Storage privado y asocia al pedido pendiente", async () => {
+test("21. [Integración de handler simulada] Webhook Media Receipt: descarga comprobante de WhatsApp/Kapso, sube a Storage privado y asocia al pedido pendiente", async () => {
   const payload = JSON.stringify({
     event: "whatsapp.message.received",
     channel: "whatsapp",
@@ -552,7 +552,7 @@ test("21. E2E-07 Webhook Media Receipt: descarga comprobante de WhatsApp/Kapso, 
   assert.equal(createdNotification, true);
 });
 
-test("22. E2E-07 Webhook Media Receipt Idempotencia: comprobante repetido con mismo provider_message_id no re-descarga ni duplica", async () => {
+test("22. [Integración de handler simulada] Webhook Media Receipt Idempotencia: comprobante repetido con mismo provider_message_id no re-descarga ni duplica", async () => {
   const payload = JSON.stringify({
     event: "whatsapp.message.received",
     channel: "whatsapp",
@@ -608,7 +608,7 @@ test("22. E2E-07 Webhook Media Receipt Idempotencia: comprobante repetido con mi
   assert.equal(downloadCalled, false);
 });
 
-test("23. E2E-07 Formato nativo Kapso v2 (message.kapso.media_data + conversation.id) descarga PDF a Storage privado", async () => {
+test("23. [Integración de handler simulada] Formato nativo Kapso v2 (message.kapso.media_data + conversation.id) descarga PDF a Storage privado", async () => {
   const payload = JSON.stringify({
     message: {
       id: "wamid.native.v2.pdf",

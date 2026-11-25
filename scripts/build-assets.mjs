@@ -16,6 +16,10 @@ const faviconSvg = existsSync("web/brand/solidbit-favicon.svg")
   ? readFileSync("web/brand/solidbit-favicon.svg", "utf8")
   : "";
 
+// Read QA fake transfer card asset
+const cardSvgPath = "web/qa/tarjeta-destino-demo.svg";
+const cardSvg = existsSync(cardSvgPath) ? readFileSync(cardSvgPath, "utf8") : "";
+
 // Read menu PNG images (if available in repository)
 const menu1Path = "web/menu/mr-burger-hamburguesas-boneless-complementos.png";
 const menu1Base64 = existsSync(menu1Path)
@@ -67,6 +71,14 @@ export const staticAssets: Record<string, StaticAsset> = {
     content: ${JSON.stringify(faviconSvg)},
     contentType: "image/svg+xml; charset=utf-8"
   },
+  "/qa/tarjeta-destino-demo.svg": {
+    content: ${JSON.stringify(cardSvg)},
+    contentType: "image/svg+xml; charset=utf-8"
+  },
+  "/qa/tarjeta-destino-demo.png": {
+    content: ${JSON.stringify(cardSvg)},
+    contentType: "image/svg+xml; charset=utf-8"
+  },
   "/menu/mr-burger-hamburguesas-boneless-complementos.png": {
     content: ${JSON.stringify(menu1Base64)},
     contentType: "image/png",
@@ -81,4 +93,4 @@ export const staticAssets: Record<string, StaticAsset> = {
 `;
 
 writeFileSync("cloudflare/crm-app/src/assets.ts", out, "utf8");
-console.log("Built cloudflare/crm-app/src/assets.ts with brand assets included.");
+console.log("Built cloudflare/crm-app/src/assets.ts with brand and QA assets included.");
