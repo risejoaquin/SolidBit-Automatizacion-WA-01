@@ -354,8 +354,16 @@ export async function handleRequest(
       url: `${crmOrigin}/menu/mr-burger-bebidas-extras-postres.png`,
     };
 
+    const pageCard = {
+      key: "tarjeta_demo",
+      name: "Tarjeta de Cuenta Destino QA",
+      url: `${crmOrigin}/qa/tarjeta-destino-demo.png`,
+    };
+
     let pagesToSend: typeof page1[] = [];
-    if (["hamburguesas", "boneless", "complementos", "page_1", "1"].includes(category)) {
+    if (["tarjeta", "transfer", "tarjeta_demo", "card"].includes(category)) {
+      pagesToSend = [pageCard];
+    } else if (["hamburguesas", "boneless", "complementos", "page_1", "1"].includes(category)) {
       pagesToSend = [page1];
     } else if (["bebidas", "extras", "postres", "page_2", "2"].includes(category)) {
       pagesToSend = [page2];
@@ -972,13 +980,43 @@ export async function handleRequest(
       ? (order.folio.startsWith("#") ? order.folio : `#${order.folio}`)
       : `#MB-${String(order?.id || "000000").replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase()}`;
 
+    let cardImageSent = false;
+    if (paymentMethod === "transfer" && cleanPhone && env.KAPSO_API_KEY) {
+      try {
+        const configuredPhoneId = String(env.KAPSO_PHONE_NUMBER_ID || "1462335776957834").trim();
+        const whatsappRecipient = cleanPhone.replace(/[^\d]/g, "");
+        const cardImageUrl = `${url.origin}/qa/tarjeta-destino-demo.png`;
+        const sendImgRes = await fetchFn(`https://api.kapso.ai/meta/whatsapp/v24.0/${configuredPhoneId}/messages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": env.KAPSO_API_KEY
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: whatsappRecipient,
+            type: "image",
+            image: {
+              link: cardImageUrl
+            }
+          })
+        });
+        cardImageSent = sendImgRes.ok;
+      } catch {
+        // Silencioso ante fallos en envío de imagen secundaria
+      }
+    }
+
     const transferDetails = paymentMethod === "transfer" ? {
       bank: "BANCO DEMO",
       holder: "MR. BURGER DEMO",
       account_number: "1234 5678 9012 3456",
       concept: orderFolio,
       label: "CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR",
-      card_image_url: `${url.origin}/qa/tarjeta-destino-demo.png`
+      card_image_url: `${url.origin}/qa/tarjeta-destino-demo.png`,
+      card_image_sent: cardImageSent,
+      prompt_text: `¡Listo! Tu pedido quedó registrado con el folio ${orderFolio} por $${Math.round((order.total_cents || priced.total_cents) / 100)}; el tiempo estimado es de ${estimatedTime}.\n\n1234 5678 9012 3456\n\nCuando realices la transferencia, comparte el comprobante por aquí para que el equipo lo valide.`
     } : undefined;
 
     return jsonResponse(200, {
@@ -1568,6 +1606,51 @@ export async function handleRequest(
             fetchFn
           ).catch(() => null);
         }
+      }
+    }
+
+    // Auto-sync de comprobante desde Kapso si no está en base de datos pero el cliente envió una imagen en el chat
+    if (!latestReceipt && details.order?.conversation_id && env.KAPSO_API_KEY) {
+      try {
+        const phoneId = String(env.KAPSO_PHONE_NUMBER_ID || "1462335776957834").trim();
+        const kapsoRes = await fetchFn(
+          `https://api.kapso.ai/platform/v1/whatsapp/messages?phone_number_id=${phoneId}&conversation_id=${details.order.conversation_id}&has_media=true&limit=10`,
+          {
+            headers: {
+              "X-API-Key": env.KAPSO_API_KEY
+            }
+          }
+        );
+        if (kapsoRes.ok) {
+          const kapsoData: any = await kapsoRes.json();
+          const imgMsg = (kapsoData.data || []).find((m: any) =>
+            m.kapso?.direction === "inbound" && (m.type === "image" || m.kapso?.has_media)
+          );
+          if (imgMsg) {
+            const mediaUrl = imgMsg.kapso?.media_url || imgMsg.image?.link || imgMsg.image?.url;
+            if (mediaUrl) {
+              const downloaded = await downloadExternalMedia(mediaUrl, env.KAPSO_API_KEY, "image/jpeg", fetchFn);
+              const fileName = imgMsg.kapso?.media_data?.filename || "comprobante.jpg";
+              const cleanFolio = (details.order.folio || details.order.id || "order").replace(/[^a-zA-Z0-9_-]/g, "");
+              const storagePath = `receipts/${sbConfig.businessId}/${cleanFolio}-receipt.jpeg`;
+              await uploadReceiptToPrivateStorage(storagePath, downloaded.bytes, downloaded.mimeType, sbConfig, fetchFn);
+              latestReceipt = await createPaymentReceipt(
+                {
+                  orderId,
+                  storagePath,
+                  fileName,
+                  fileSize: downloaded.fileSize,
+                  mimeType: downloaded.mimeType,
+                  status: "pending_validation"
+                },
+                sbConfig,
+                fetchFn
+              );
+            }
+          }
+        }
+      } catch {
+        // Silencioso; continúa con el fallback
       }
     }
 
