@@ -4260,9 +4260,9 @@ test("84. [Integración simulada estricta] Pedido a domicilio (1 Tocino + 1 Dedo
 
   // Verifica entrega de datos de transferencia de prueba en QA
   assert.ok(data.transfer_details, "Debe incluir transfer_details en la respuesta para pago transfer");
-  assert.equal(data.transfer_details.bank, "BANCO DEMO");
-  assert.equal(data.transfer_details.holder, "MR. BURGER DEMO");
-  assert.equal(data.transfer_details.account_number, "1234 5678 9012 3456");
+  assert.equal(data.transfer_details.bank, "MR. BURGER");
+  assert.equal(data.transfer_details.holder, "MR. BURGER");
+  assert.equal(data.transfer_details.account_number, "0000 0000 0000 0000");
   assert.equal(data.transfer_details.concept, data.folio);
   assert.equal(data.transfer_details.label, "CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR");
   assert.ok(data.transfer_details.card_image_url.endsWith("/qa/tarjeta-destino-demo.png"));
@@ -4298,8 +4298,8 @@ test("85. Asset estático de tarjeta ficticia de transferencia (/qa/tarjeta-dest
   assert.equal(resSvg.status, 200);
   assert.ok(resSvg.headers.get("Content-Type")?.includes("image/svg+xml"));
   const svgText = await resSvg.text();
-  assert.ok(svgText.includes("BANCO DEMO"));
-  assert.ok(svgText.includes("1234  5678  9012  3456"));
+  assert.ok(svgText.includes("MR. BURGER"));
+  assert.ok(svgText.includes("0000  0000  0000  0000"));
   assert.ok(svgText.includes("CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR"));
 
   const reqPng = new Request("https://crm.local/qa/tarjeta-destino-demo.png", { method: "GET" });

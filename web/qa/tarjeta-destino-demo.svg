@@ -27,10 +27,10 @@
 
   <!-- Bank Logo & Name -->
   <text x="70" y="135" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="800" letter-spacing="3">
-    BANCO DEMO
+    MR. BURGER
   </text>
   <text x="730" y="135" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="600" text-anchor="end">
-    TRANSFERENCIA QA
+    TARJETA DE PRUEBA
   </text>
 
   <!-- EMV Chip -->
@@ -43,7 +43,7 @@
 
   <!-- Card Number -->
   <text x="70" y="285" fill="#ffffff" font-family="'Courier New', Courier, monospace" font-size="42" font-weight="bold" letter-spacing="6">
-    1234  5678  9012  3456
+    0000  0000  0000  0000
   </text>
 
   <!-- Labels -->
@@ -51,7 +51,7 @@
     TITULAR DE LA CUENTA
   </text>
   <text x="70" y="375" fill="#f1f5f9" font-family="system-ui, -apple-system, sans-serif" font-size="26" font-weight="700" letter-spacing="1.5">
-    MR. BURGER DEMO
+    MR. BURGER
   </text>
 
   <text x="540" y="340" fill="#64748b" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" text-transform="uppercase" letter-spacing="1.5">

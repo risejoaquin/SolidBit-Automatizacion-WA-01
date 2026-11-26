@@ -1009,14 +1009,14 @@ export async function handleRequest(
     }
 
     const transferDetails = paymentMethod === "transfer" ? {
-      bank: "BANCO DEMO",
-      holder: "MR. BURGER DEMO",
-      account_number: "1234 5678 9012 3456",
+      bank: "MR. BURGER",
+      holder: "MR. BURGER",
+      account_number: "0000 0000 0000 0000",
       concept: orderFolio,
       label: "CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR",
       card_image_url: `${url.origin}/qa/tarjeta-destino-demo.png`,
       card_image_sent: cardImageSent,
-      prompt_text: `Son $${Math.round((order.total_cents || priced.total_cents) / 100)}:\n\nMr. Burger Demo\n1234 5678 9012 3456`
+      prompt_text: `Son $${Math.round((order.total_cents || priced.total_cents) / 100)}:\n\nMr. Burger\n0000 0000 0000 0000`
     } : undefined;
 
     return jsonResponse(200, {
