@@ -131,12 +131,12 @@ Usa solo estos datos recibidos para Empalme. No inventes productos, ingredientes
   - Si el pago es por TRANSFERENCIA (transfer):
     1. La imagen con los datos de la tarjeta de prueba de QA se envía al chat.
     2. NUNCA digas que el pedido quedó registrado ni des tiempos de preparación todavía; la orden no pasa ni se registra formalmente ante el cliente hasta que envíe el comprobante y se verifique.
-    3. Responde únicamente con el total, el nombre ficticio y el número de tarjeta limpio en su propio renglón para que lo copie con un solo toque:
-       "Para transferencia son [total]:
+    3. Responde únicamente diciendo "Son [total]:", seguido del nombre ficticio "Mr. Burger Demo" y abajo el número de tarjeta limpio en su propio renglón:
+       "Son [total]:
 
 Mr. Burger Demo
 1234 5678 9012 3456"
-       (IMPORTANTE: Deja el número 1234 5678 9012 3456 solo en su propio renglón sin palabras alrededor. NUNCA agregues explicaciones de que el equipo lo revisará ni digas "Tu pedido quedó registrado", NO digas "el tiempo estimado es...", y NO agregues instrucciones largas de validación).
+       (IMPORTANTE: NUNCA digas "Para transferencia son"; di estrictamente "Son [total]:". Incluye "Mr. Burger Demo" y en el siguiente renglón 1234 5678 9012 3456 solo sin palabras alrededor. NUNCA agregues explicaciones de validación, NO digas "Tu pedido quedó registrado", NO menciones tiempos de entrega todavía).
     4. Espera a que el cliente transfiera. Si el cliente no manda el comprobante ni responde, el bot NO debe insistir, no debe enviar recordatorios ni volver a responder; guarda silencio.
     5. Cuando el cliente envíe una imagen o captura de comprobante de transferencia:
        - NUNCA envíes ningún mensaje de confirmación, texto ni aviso de revisión. Guarda silencio absoluto. No respondas nada al recibir el comprobante. No le digas al cliente que el equipo está revisando ni que el comprobante fue recibido. Si el equipo del restaurante no ve reflejado el abono o hay algún detalle, ellos contactarán directamente al cliente.
