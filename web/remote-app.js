@@ -945,6 +945,10 @@ function openReceiptModal(orderId, folio) {
     $("receipt-reject-box").style.display = "none";
   }
 
+  if ($("receipt-bank-helper")) {
+    $("receipt-bank-helper").textContent = "Cuenta destino: Mr. Burger · 0000 0000 0000 0000 (Tarjeta Demo)";
+  }
+
   // Visualizador del comprobante
   const preview = $("receipt-preview-container");
   preview.replaceChildren(node("p", "Cargando imagen del comprobante…", "muted"));

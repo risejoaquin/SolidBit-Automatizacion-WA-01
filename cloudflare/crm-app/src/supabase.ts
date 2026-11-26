@@ -36,7 +36,8 @@ async function timedFetch(fetchFn: typeof fetch, url: string, opts: RequestInit 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
   try {
-    return await fetchFn(url, { ...opts, signal: controller.signal, redirect: "manual" });
+    const redirectMode = opts.redirect || "manual";
+    return await fetchFn(url, { ...opts, signal: controller.signal, redirect: redirectMode });
   } finally {
     clearTimeout(timer);
   }
@@ -1040,19 +1041,36 @@ export async function downloadExternalMedia(
   } catch {
     throw new AppHttpError(400, "URL de medio inválida", "INVALID_MEDIA_URL");
   }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || isDisallowedMediaHost(parsed.hostname)) {
-    throw new AppHttpError(400, "Origen de descarga de medio no permitido", "UNSAFE_MEDIA_ORIGIN");
+
+  let currentUrl = parsed.toString();
+  let res: Response;
+  let redirects = 0;
+  while (true) {
+    const curParsed = new URL(currentUrl);
+    if (curParsed.protocol !== "https:" || curParsed.username || curParsed.password || isDisallowedMediaHost(curParsed.hostname)) {
+      throw new AppHttpError(400, "Origen de descarga de medio no permitido", "UNSAFE_MEDIA_ORIGIN");
+    }
+    const headers: Record<string, string> = {
+      "Accept": "image/jpeg,image/png,image/webp,application/pdf,*/*"
+    };
+    if (kapsoApiKey && (curParsed.hostname === "api.kapso.ai" || curParsed.hostname.endsWith(".kapso.ai"))) {
+      headers["X-API-Key"] = kapsoApiKey;
+      headers["Authorization"] = `Bearer ${kapsoApiKey}`;
+    }
+
+    res = await timedFetch(fetchFn, currentUrl, { method: "GET", headers, redirect: "manual" });
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const loc = res.headers.get("location");
+      if (!loc || redirects >= 5) {
+        throw new AppHttpError(502, "Error de redirección al descargar comprobante", "MEDIA_REDIRECT_ERROR");
+      }
+      currentUrl = new URL(loc, currentUrl).toString();
+      redirects++;
+      continue;
+    }
+    break;
   }
 
-  const headers: Record<string, string> = {
-    "Accept": "image/jpeg,image/png,image/webp,application/pdf,*/*"
-  };
-  if (kapsoApiKey && (parsed.hostname === "api.kapso.ai" || parsed.hostname.endsWith(".kapso.ai"))) {
-    headers["X-API-Key"] = kapsoApiKey;
-    headers["Authorization"] = `Bearer ${kapsoApiKey}`;
-  }
-
-  const res = await timedFetch(fetchFn, parsed.toString(), { method: "GET", headers });
   if (!res.ok) {
     throw new AppHttpError(502, `No fue posible descargar el comprobante desde el proveedor (HTTP ${res.status})`, "MEDIA_DOWNLOAD_FAILED");
   }
