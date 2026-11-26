@@ -1016,7 +1016,7 @@ export async function handleRequest(
       label: "CUENTA DE PRUEBA — NO REAL — NO TRANSFERIR",
       card_image_url: `${url.origin}/qa/tarjeta-destino-demo.png`,
       card_image_sent: cardImageSent,
-      prompt_text: `¡Muy bien, recibido! Tu pedido quedó registrado por $${Math.round((order.total_cents || priced.total_cents) / 100)}; el tiempo estimado es de ${estimatedTime}.\n\n1234 5678 9012 3456\n\nCuando realices la transferencia, comparte el comprobante por aquí para que el equipo lo valide.`
+      prompt_text: `Para transferencia son $${Math.round((order.total_cents || priced.total_cents) / 100)}:\n\n1234 5678 9012 3456`
     } : undefined;
 
     return jsonResponse(200, {
