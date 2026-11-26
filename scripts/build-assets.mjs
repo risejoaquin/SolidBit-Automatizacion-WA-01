@@ -19,6 +19,10 @@ const faviconSvg = existsSync("web/brand/solidbit-favicon.svg")
 // Read QA fake transfer card asset
 const cardSvgPath = "web/qa/tarjeta-destino-demo.svg";
 const cardSvg = existsSync(cardSvgPath) ? readFileSync(cardSvgPath, "utf8") : "";
+const cardPngPath = "web/qa/tarjeta-destino-demo.png";
+const cardPngBase64 = existsSync(cardPngPath)
+  ? readFileSync(cardPngPath).toString("base64")
+  : "";
 
 // Read menu PNG images (if available in repository)
 const menu1Path = "web/menu/mr-burger-hamburguesas-boneless-complementos.png";
@@ -76,8 +80,9 @@ export const staticAssets: Record<string, StaticAsset> = {
     contentType: "image/svg+xml; charset=utf-8"
   },
   "/qa/tarjeta-destino-demo.png": {
-    content: ${JSON.stringify(cardSvg)},
-    contentType: "image/svg+xml; charset=utf-8"
+    content: ${JSON.stringify(cardPngBase64)},
+    contentType: "image/png",
+    isBase64: true
   },
   "/menu/mr-burger-hamburguesas-boneless-complementos.png": {
     content: ${JSON.stringify(menu1Base64)},

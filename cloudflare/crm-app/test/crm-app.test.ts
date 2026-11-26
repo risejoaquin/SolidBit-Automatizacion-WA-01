@@ -4305,7 +4305,7 @@ test("85. Asset estático de tarjeta ficticia de transferencia (/qa/tarjeta-dest
   const reqPng = new Request("https://crm.local/qa/tarjeta-destino-demo.png", { method: "GET" });
   const resPng = await handleRequest(reqPng, testEnv);
   assert.equal(resPng.status, 200);
-  assert.ok(resPng.headers.get("Content-Type")?.includes("image/svg+xml"));
+  assert.ok(resPng.headers.get("Content-Type")?.includes("image/png"));
 });
 
 test("86. Rechazo estricto bajo el esquema real de Postgres ante violaciones de orders_check y columnas prohibidas", async () => {
