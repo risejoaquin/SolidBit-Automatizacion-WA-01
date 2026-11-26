@@ -8,11 +8,11 @@
         "workflows\\mr-burger-e2e-primer-cliente-empalme\\workflow.yaml": "facde845dc3db95af83b900d485747083b534b2f6d664908b69c42f68c332f5a"
       },
       "generatedSource": {
-        "hash": "6d8504dac41886f2cea8fc1833fe2551ee35521767417a382499af8069890505",
+        "hash": "bef34177fa4193170e0036ae8409d37d98b4b6f6c85b235ab348b41d300e283a",
         "path": "workflows\\mr-burger-e2e-primer-cliente-empalme\\workflow.js"
       },
       "id": "38a8f30b-c2da-4ac0-a5c6-bf0953fd712f",
-      "lockVersion": 63,
+      "lockVersion": 69,
       "slug": "mr-burger-e2e-primer-cliente-empalme",
       "sourceFile": {
         "hash": "272f0898497147378b62933f4871f3d4a8989457d31514b500579a6a884b086c",
