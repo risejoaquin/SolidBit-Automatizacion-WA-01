@@ -4,22 +4,22 @@
   "workflows": {
     "mr-burger-e2e-primer-cliente-empalme": {
       "files": {
-        "workflows\\mr-burger-e2e-primer-cliente-empalme\\definition.json": "7ed737ceaf05b5d1f04c51069e99764a5dbe3bf540635786baba243dd5ed855b",
+        "workflows\\mr-burger-e2e-primer-cliente-empalme\\definition.json": "7a06b6a2c4912f1bc77f723d0721cea829890f617af5a9d78e5885fb813c6324",
         "workflows\\mr-burger-e2e-primer-cliente-empalme\\workflow.yaml": "facde845dc3db95af83b900d485747083b534b2f6d664908b69c42f68c332f5a"
       },
       "generatedSource": {
-        "hash": "2314951b9cdd468c8282b548ea726a38b1db0c8d497617061b1fcc7d9a5d990c",
+        "hash": "59601eb8525bf3fb09a09b416f05a63f11a807361b44e4026179dab4c36ce537",
         "path": "workflows\\mr-burger-e2e-primer-cliente-empalme\\workflow.js"
       },
       "id": "38a8f30b-c2da-4ac0-a5c6-bf0953fd712f",
-      "lockVersion": 52,
+      "lockVersion": 53,
       "slug": "mr-burger-e2e-primer-cliente-empalme",
       "sourceFile": {
-        "hash": "14e2d10de3e1087b4003a582f504a803854c541c69b53cab8cbe8047abbfecb0",
+        "hash": "0defd3cd8e192ced45058acc100efc66550dbac85bb5c9f80bb68c8c5b52c022",
         "path": "workflows\\mr-burger-e2e-primer-cliente-empalme\\workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-11-26T00:20:07-03:00"
+      "updatedAt": "2026-11-26T00:25:15-03:00"
     }
   }
 }
